@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "transcript": {
+      "type": "string"
+    },
+    "timestamp_ms": {
+      "type": "integer"
+    },
+    "intent": {
+      "type": "string"
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "transcript",
+    "timestamp_ms"
+  ]
+}

@@ -1,0 +1,20 @@
+=== Windows PulseAudio Configuration ===
+
+1. Create C:\pulseaudio\etc\pulse\default.pa with these lines at the end:
+
+load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1;10.255.255.254/32;172.16.0.0/12 auth-anonymous=1
+load-module module-waveout sink_name=output source_name=input record=1
+
+2. Create C:\pulseaudio\etc\pulse\daemon.conf with:
+
+exit-idle-time = -1
+high-priority = yes
+
+3. Create C:\pulseaudio\start-pulseaudio.bat:
+
+@echo off
+echo Starting PulseAudio for WSL...
+cd /d C:\pulseaudio\bin
+pulseaudio.exe -D --high-priority --exit-idle-time=-1 --log-target=file:C:\pulseaudio\pulse.log
+echo PulseAudio started!
+pause

@@ -1,0 +1,6 @@
+
+torch>=2.2.0
+transformers>=4.42.0
+openai-whisper
+bleak
+gradio>=4.25.2

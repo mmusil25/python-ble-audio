@@ -1,0 +1,78 @@
+
+
+Looking for an Embedded / BLE Audio engineer who has shipped real-time audio over Bluetooth Low Energy in Python (bleak, BluePy, or CoreBluetooth). Must show:
+
+Device discovery & auto-reconnect loop
+
+Live PCM/WAV streaming & writeout
+
+Tight integration with Whisper Tiny (or other STT)
+
+Nice-to-have: prompt-engineering or Gemma 3n JSON extraction.
+DM with a GitHub link or Loom demo of your BLE audio pipeline running
+This is what you will need to cover
+0 Repo bootstrap (.gitignore, licence, stub README) _x__
+1 BLE audio stream with auto-reconnect (ble_listener.py) ___
+2 Whisper Tiny transcription ___
+3 Gemma 3n JSON extractor ___
+4 demo.py wrapper (file & live) ___
+5 Gradio UI (.gradio.live link) ___
+6 README quick-start + disclosure ___
+Omi pendant Python SDK
+https://github.com/BasedHardware/omi/tree/main/sdks/python
+Unsloth quick-start for Gemma 3n
+https://docs.unsloth.ai/basics/gemma-3n-how-to-run-and-fine-tune
+Kaggle multimodal Gemma 3n notebook (text branch only)
+https://www.kaggle.com/code/danielhanchen/gemma-3n-4b-multimodal-finetuning-inference
+We’ll provide two 5-second WAV test files in /samples.
+
+Environment
+Do you already have a Linux machine (GPU not required, but helpful) where you can run Whisper and Gemma locally? Yes!
+
+
+
+
+
+
+Deepgram API key
+
+
+export DEEPGRAM_API_KEY=E1509eb07ebf17087953db0dff6ed25fa5ac3c95
+
+
+An excerpt from the client’s ai chat. 
+The Unsloth link you saw is a valid set of Gemma 3-N weights—it’s a community-repackaged, 4-bit GGUF version that runs with llama.cpp, LM Studio, or Unsloth’s own helpers.
+ If Mark is happy to use the Unsloth stack, you can just give him one of these:
+Variant
+Size
+Link
+E4B-it (GGUF, 4-bit) – instruction-tuned
+4 B params
+https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF Hugging Face
+E2B-it (GGUF, 4-bit) – smaller
+2 B params
+https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF Hugging Face
+
+
+If Mark prefers the standard Transformers flow
+Point him to the official Google weights instead:
+Variant
+Link
+Notes
+E2B-base / E2B-it
+https://huggingface.co/google/gemma-3n-E2B Hugging Face
+2 B params, easiest on VRAM
+E4B-base / E4B-it
+https://huggingface.co/google/gemma-3n-E4B-it-litert-preview Hugging Face
+4 B params, still fine on a 4090
+
+He just needs to:
+python
+CopyEdit
+from transformers import AutoModelForCausalLM, AutoTokenizer
+model_id = "google/gemma-3n-E2B-it"   # or E4B-it
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, torch_dtype="auto")
+
+
+Important: Mark (and you) must be logged into Hugging Face and click “Agree & access” on the model page once; the download then works via transformers or huggingface-cli Hugging Face.

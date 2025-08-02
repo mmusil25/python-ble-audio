@@ -1,0 +1,32 @@
+{
+  "pipeline_run": {
+    "timestamp": "2025-08-02T18:04:13.038826",
+    "total_processed": 1,
+    "transcription_engine": "WhisperEngine",
+    "extraction_model": "MockExtractor"
+  },
+  "results": [
+    {
+      "audio_file": "samples/harvard.wav",
+      "timestamp": "2025-08-02T18:04:13.038641",
+      "transcription": {
+        "filepath": "samples/harvard.wav",
+        "text": "The stale smell of old beer lingers. It takes heat to bring out the odor. A cold dip restores health in zest. A salt pickle tastes fine with ham. Tuckles all pastora are my favorite. A zestful food is the hot cross bun.",
+        "duration": 0.7599921226501465,
+        "timestamp": 1754172252.1785164,
+        "datetime": "2025-08-02T18:04:12.178516"
+      },
+      "extraction": {
+        "transcript": "The stale smell of old beer lingers. It takes heat to bring out the odor. A cold dip restores health in zest. A salt pickle tastes fine with ham. Tuckles all pastora are my favorite. A zestful food is the hot cross bun.",
+        "timestamp_ms": 1754172252178,
+        "intent": "statement",
+        "entities": [
+          "Tuckles"
+        ],
+        "extraction_time_ms": 100,
+        "datetime": "2025-08-02T18:04:13.038612"
+      },
+      "pipeline_time_ms": 859.9921226501465
+    }
+  ]
+}

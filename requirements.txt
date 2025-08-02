@@ -1,0 +1,22 @@
+# Core dependencies
+torch>=2.0.0
+transformers>=4.30.0
+openai-whisper>=20230314
+
+# BLE and audio
+bleak>=0.20.0
+sounddevice>=0.4.6
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Web interface
+gradio>=4.0.0
+pandas>=2.0.0
+
+# Optional but recommended
+requests>=2.28.0  # For Deepgram API
+ffmpeg-python>=0.2.0  # For audio processing
+
+# Development
+pytest>=7.0.0
+black>=23.0.0

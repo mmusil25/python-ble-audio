@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from datetime import datetime
 import numpy as np
+import sounddevice as sd
 
 # Import our modules
 from ble_listener import (
@@ -41,6 +42,28 @@ extraction_manager = None
 is_streaming = False
 transcription_history = []
 extraction_history = []
+
+
+def get_audio_devices():
+    """Get list of available audio input devices"""
+    if not SOUNDDEVICE_AVAILABLE:
+        return []
+    
+    devices = []
+    try:
+        device_list = sd.query_devices()
+        for i, device in enumerate(device_list):
+            if device['max_input_channels'] > 0:
+                devices.append({
+                    'index': i,
+                    'name': device['name'],
+                    'channels': device['max_input_channels'],
+                    'label': f"[{i}] {device['name']} ({device['max_input_channels']} ch)"
+                })
+    except Exception as e:
+        print(f"Error getting audio devices: {e}")
+    
+    return devices
 
 
 def initialize_pipeline(transcription_engine="whisper", extraction_model="mock"):
@@ -110,18 +133,17 @@ def process_audio_file(audio_file, transcription_engine="whisper", extraction_mo
         return f"Error processing file: {str(e)}", None, None, None
 
 
-async def start_streaming(audio_source="mock", transcription_engine="whisper", extraction_model="mock"):
+async def start_streaming(audio_source="mock", audio_device=None, transcription_engine="whisper", extraction_model="mock"):
     """Start live streaming"""
-    global streaming_manager, is_streaming, transcription_history, extraction_history
+    global streaming_manager, is_streaming, transcription_history, extraction_history, transcription_manager, extraction_manager
     
     if is_streaming:
         return "Already streaming!", None, None
     
-    # Initialize if needed
-    if transcription_manager is None:
-        status, _ = initialize_pipeline(transcription_engine, extraction_model)
-        if "Error" in status:
-            return status, None, None
+    # Always reinitialize to ensure fresh event loop context
+    status, _ = initialize_pipeline(transcription_engine, extraction_model)
+    if "Error" in status:
+        return status, None, None
     
     # Clear history
     transcription_history = []
@@ -129,7 +151,15 @@ async def start_streaming(audio_source="mock", transcription_engine="whisper", e
     
     # Create audio source
     if audio_source == "mic" and SOUNDDEVICE_AVAILABLE:
-        source = MicrophoneSource()
+        # Parse device index from dropdown selection
+        device_index = None
+        if audio_device and audio_device != "default":
+            try:
+                # Extract device index from "[index] device name" format
+                device_index = int(audio_device.split(']')[0].strip('['))
+            except:
+                device_index = None
+        source = MicrophoneSource(device_index=device_index)
     elif audio_source == "ble" and BLEAK_AVAILABLE:
         source = RealBLESource()
     else:
@@ -166,7 +196,15 @@ async def start_streaming(audio_source="mock", transcription_engine="whisper", e
     # Run in background
     asyncio.create_task(streaming_manager.start_streaming())
     
-    return "Streaming started!", None, None
+    # Status message
+    if audio_source == "mic":
+        device_info = f" (Device: {audio_device or 'default'})"
+    else:
+        device_info = ""
+    
+    status_msg = f"✅ Streaming started! Source: {audio_source}{device_info}\n📊 Real-time transcription active..."
+    
+    return status_msg, None, None
 
 
 async def stop_streaming():
@@ -201,24 +239,45 @@ async def stop_streaming():
 def update_streaming_display():
     """Update the streaming display with latest results"""
     if not is_streaming:
-        return None, None, None
+        return None, None, "Not currently streaming"
     
-    # Format transcription history
+    # Format transcription history with better styling
     if transcription_history:
-        trans_df = pd.DataFrame(transcription_history[-10:])  # Last 10
-        trans_display = trans_df.to_html(index=False)
+        trans_html = '<div style="max-height: 400px; overflow-y: auto;">'
+        trans_html += '<table style="width: 100%; border-collapse: collapse;">'
+        trans_html += '<tr style="background-color: #f0f0f0;"><th style="padding: 8px;">Time</th><th style="padding: 8px;">Transcription</th></tr>'
+        
+        for item in transcription_history[-15:]:  # Last 15 entries
+            trans_html += f'<tr style="border-bottom: 1px solid #ddd;">'
+            trans_html += f'<td style="padding: 8px; white-space: nowrap;">{item["time"]}</td>'
+            trans_html += f'<td style="padding: 8px;">{item["text"]}</td>'
+            trans_html += '</tr>'
+        
+        trans_html += '</table></div>'
+        trans_display = trans_html
     else:
-        trans_display = "No transcriptions yet..."
+        trans_display = '<div style="padding: 20px; text-align: center; color: #666;">🎤 Waiting for speech...</div>'
     
-    # Format extraction history
+    # Format extraction history with better styling
     if extraction_history:
-        ext_df = pd.DataFrame(extraction_history[-10:])  # Last 10
-        ext_display = ext_df.to_html(index=False)
+        ext_html = '<div style="max-height: 400px; overflow-y: auto;">'
+        ext_html += '<table style="width: 100%; border-collapse: collapse;">'
+        ext_html += '<tr style="background-color: #f0f0f0;"><th style="padding: 8px;">Time</th><th style="padding: 8px;">Intent</th><th style="padding: 8px;">Entities</th></tr>'
+        
+        for item in extraction_history[-15:]:  # Last 15 entries
+            ext_html += f'<tr style="border-bottom: 1px solid #ddd;">'
+            ext_html += f'<td style="padding: 8px; white-space: nowrap;">{item["time"]}</td>'
+            ext_html += f'<td style="padding: 8px;">{item["intent"]}</td>'
+            ext_html += f'<td style="padding: 8px;">{item["entities"]}</td>'
+            ext_html += '</tr>'
+        
+        ext_html += '</table></div>'
+        ext_display = ext_html
     else:
-        ext_display = "No extractions yet..."
+        ext_display = '<div style="padding: 20px; text-align: center; color: #666;">📋 No extractions yet...</div>'
     
-    # Status
-    status = f"Streaming active - {len(transcription_history)} transcriptions"
+    # Status with emoji
+    status = f"🔴 Streaming active | 📝 {len(transcription_history)} transcriptions | 🎯 {len(extraction_history)} extractions"
     
     return trans_display, ext_display, status
 
@@ -275,8 +334,30 @@ def create_app():
                 with gr.Column():
                     audio_source = gr.Radio(
                         ["mock", "mic", "ble"],
-                        value="mock",
+                        value="mic",
                         label="Audio Source"
+                    )
+                    
+                    # Get available audio devices
+                    audio_devices = get_audio_devices()
+                    device_choices = ["default"] + [dev['label'] for dev in audio_devices]
+                    
+                    audio_device_dropdown = gr.Dropdown(
+                        choices=device_choices,
+                        value="default",
+                        label="Audio Input Device",
+                        visible=True,
+                        interactive=True
+                    )
+                    
+                    # Update dropdown visibility based on audio source
+                    def update_device_visibility(source):
+                        return gr.update(visible=(source == "mic"))
+                    
+                    audio_source.change(
+                        fn=update_device_visibility,
+                        inputs=[audio_source],
+                        outputs=[audio_device_dropdown]
                     )
                     
                     with gr.Row():
@@ -298,12 +379,28 @@ def create_app():
                     stream_status = gr.Textbox(label="Status", lines=2)
                 
                 with gr.Column():
-                    gr.Markdown("### Live Results")
-                    refresh_btn = gr.Button("Refresh Display")
+                    gr.Markdown("### Live Results (Real-time)")
+                    with gr.Row():
+                        refresh_btn = gr.Button("Refresh Display")
+                        refresh_devices_btn = gr.Button("Refresh Audio Devices")
                     
                     with gr.Row():
-                        live_transcriptions = gr.HTML(label="Recent Transcriptions")
-                        live_extractions = gr.HTML(label="Recent Extractions")
+                        live_transcriptions = gr.HTML(label="Recent Transcriptions", elem_id="live_trans")
+                        live_extractions = gr.HTML(label="Recent Extractions", elem_id="live_ext")
+                    
+                    # Auto-refresh notice
+                    gr.Markdown("*💡 Click 'Refresh Display' to see latest transcriptions, or enable auto-refresh below*")
+                    
+                    # Refresh audio devices
+                    def refresh_audio_devices():
+                        devices = get_audio_devices()
+                        choices = ["default"] + [dev['label'] for dev in devices]
+                        return gr.update(choices=choices)
+                    
+                    refresh_devices_btn.click(
+                        fn=refresh_audio_devices,
+                        outputs=[audio_device_dropdown]
+                    )
         
         with gr.Tab("Settings"):
             gr.Markdown("""
@@ -366,14 +463,33 @@ def create_app():
             outputs=[file_status, file_transcription, file_json, file_summary]
         )
         
+        # Use sync wrappers to avoid event loop conflicts
+        def start_streaming_sync(*args):
+            """Synchronous wrapper for start_streaming"""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(start_streaming(*args))
+            finally:
+                loop.close()
+        
+        def stop_streaming_sync():
+            """Synchronous wrapper for stop_streaming"""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(stop_streaming())
+            finally:
+                loop.close()
+        
         start_btn.click(
-            fn=lambda *args: asyncio.run(start_streaming(*args)),
-            inputs=[audio_source, stream_trans, stream_ext],
+            fn=start_streaming_sync,
+            inputs=[audio_source, audio_device_dropdown, stream_trans, stream_ext],
             outputs=[stream_status, live_transcriptions, live_extractions]
         )
         
         stop_btn.click(
-            fn=lambda: asyncio.run(stop_streaming()),
+            fn=stop_streaming_sync,
             outputs=[stream_status, live_transcriptions, live_extractions]
         )
         

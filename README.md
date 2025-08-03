@@ -15,6 +15,32 @@ A Python implementation of a real-time audio processing pipeline that streams au
 - **Web Interface** via Gradio with live streaming display
 - **GPU Acceleration** support for faster processing
 - **Structured JSON Output** following the required schema
+- **Unsloth Optimization** for 2x faster Gemma 3n inference
+
+## 🚀 Unsloth Integration (Competition Requirement)
+
+This project uses **Unsloth** for optimized Gemma 3n inference, which is a requirement for the $10k side prize. Unsloth provides:
+
+- **2x Faster Inference** compared to standard transformers
+- **60% Less Memory Usage** enabling larger batch sizes
+- **Drop-in Replacement** requiring minimal code changes
+- **Automatic Optimization** for Gemma 3n-E4B-it model
+
+### Installation
+
+```bash
+# Install Unsloth with torch support
+pip install "unsloth[torch]"
+```
+
+The integration is automatic - when Unsloth is installed, the system will automatically use the optimized `unsloth/gemma-3n-e4b-it` model for faster inference.
+
+### Testing Unsloth
+
+```bash
+# Test Unsloth integration
+python test_unsloth_gemma.py
+```
 
 ## 📋 Requirements
 

@@ -11,11 +11,22 @@ from typing import Dict, List, Optional, Union
 from datetime import datetime
 import re
 
+# Try to import Unsloth first (before transformers) for optimal performance
+UNSLOTH_AVAILABLE = False
+try:
+    from unsloth import FastLanguageModel
+    UNSLOTH_AVAILABLE = True
+    print("✅ Unsloth available for accelerated inference!")
+except ImportError:
+    pass
+
 # Model loading options
 try:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
     TRANSFORMERS_AVAILABLE = True
+    if not UNSLOTH_AVAILABLE:
+        print("Warning: Unsloth not available. Using standard transformers.")
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
     print("Warning: transformers/torch not available. Install with: pip install transformers torch")
@@ -34,9 +45,9 @@ class JSONExtractor:
 
 
 class GemmaExtractor(JSONExtractor):
-    """Gemma-based JSON extractor using Transformers"""
+    """Gemma-based JSON extractor using Transformers with Unsloth optimization"""
     
-    def __init__(self, model_id="google/gemma-2b-it", device=None, max_length=512):
+    def __init__(self, model_id="google/gemma-2b-it", device=None, max_length=512, use_unsloth=True):
         if not TRANSFORMERS_AVAILABLE:
             raise RuntimeError("Transformers library not available")
         
@@ -48,16 +59,32 @@ class GemmaExtractor(JSONExtractor):
         self.device = device
         self.max_length = max_length
         
-        logger.info(f"Loading Gemma model: {model_id}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id, 
-            trust_remote_code=True,
-            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-            device_map=device
-        )
-        self.model.eval()
-        logger.info(f"Gemma model loaded on {device}")
+        # Use Unsloth for Gemma 3n model if available and requested
+        if use_unsloth and UNSLOTH_AVAILABLE and "gemma-3n" in model_id.lower():
+            logger.info(f"Loading Gemma model with Unsloth optimization: gemma-3n-e4b-it")
+            # Load with 4bit quantization for faster inference
+            self.model, self.processor = FastLanguageModel.from_pretrained(
+                "unsloth/gemma-3n-e4b-it",  # Use the specific Unsloth model
+                dtype=None,  # Let Unsloth handle dtype
+                load_in_4bit=True,  # Use 4-bit quantization for efficiency
+            )
+            # Use the fast inference mode
+            FastLanguageModel.for_inference(self.model)
+            # Store the actual tokenizer from the processor
+            self.tokenizer = self.processor.tokenizer if hasattr(self.processor, 'tokenizer') else self.processor
+            logger.info(f"Gemma 3n model loaded with Unsloth on {device}")
+        else:
+            # Fallback to standard transformers
+            logger.info(f"Loading Gemma model: {model_id}")
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id, 
+                trust_remote_code=True,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                device_map=device
+            )
+            self.model.eval()
+            logger.info(f"Gemma model loaded on {device}")
         
         # Set pad token if not set
         if self.tokenizer.pad_token is None:
@@ -65,7 +92,36 @@ class GemmaExtractor(JSONExtractor):
     
     def _create_prompt(self, transcript: str) -> str:
         """Create prompt for JSON extraction"""
-        prompt = f"""<start_of_turn>user
+        # Use apply_chat_template - check processor first, then tokenizer
+        apply_template_fn = None
+        if hasattr(self, 'processor') and hasattr(self.processor, 'apply_chat_template'):
+            apply_template_fn = self.processor.apply_chat_template
+        elif hasattr(self.tokenizer, 'apply_chat_template'):
+            apply_template_fn = self.tokenizer.apply_chat_template
+            
+        if apply_template_fn:
+            messages = [
+                {
+                    "role": "user",
+                    "content": f"""Extract structured information from the following transcript and return it as JSON.
+
+The JSON should follow this schema:
+{{
+  "transcript": "the original transcript text",
+  "timestamp_ms": "current timestamp in milliseconds",
+  "intent": "the main intent or purpose of the speaker",
+  "entities": ["list", "of", "key", "entities", "mentioned"]
+}}
+
+Transcript: "{transcript}"
+
+Return only valid JSON, no additional text."""
+                }
+            ]
+            return apply_template_fn(messages, tokenize=False, add_generation_prompt=True)
+        else:
+            # Fallback to manual template
+            prompt = f"""<start_of_turn>user
 Extract structured information from the following transcript and return it as JSON.
 
 The JSON should follow this schema:
@@ -81,7 +137,7 @@ Transcript: "{transcript}"
 Return only valid JSON, no additional text.<end_of_turn>
 <start_of_turn>model
 """
-        return prompt
+            return prompt
     
     def extract(self, transcript: str, timestamp_ms: int = None) -> Dict:
         """Extract structured data from transcript"""
@@ -98,11 +154,12 @@ Return only valid JSON, no additional text.<end_of_turn>
         
         # Tokenize
         inputs = self.tokenizer(
-            prompt,
+            prompt,  # Pass string directly 
             return_tensors="pt",
             truncation=True,
             max_length=self.max_length,
-            padding=True
+            padding=True,
+            add_special_tokens=True
         ).to(self.device)
         
         # Generate
@@ -234,6 +291,12 @@ class ExtractionManager:
     def __init__(self, extractor_type="gemma", **extractor_kwargs):
         # Create extractor
         if extractor_type == "gemma" and TRANSFORMERS_AVAILABLE:
+            # Use Gemma 3n model with Unsloth if available
+            if UNSLOTH_AVAILABLE:
+                logger.info("Using Gemma 3n with Unsloth optimization")
+                # Override model_id to use Gemma 3n for Unsloth optimization
+                extractor_kwargs["model_id"] = "gemma-3n-e4b-it"
+                extractor_kwargs["use_unsloth"] = True
             self.extractor = GemmaExtractor(**extractor_kwargs)
         else:
             if extractor_type == "gemma" and not TRANSFORMERS_AVAILABLE:

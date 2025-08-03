@@ -144,7 +144,7 @@ python-ble-audio/
 
 ```bash
 # For Deepgram API (alternative to Whisper)
-export DEEPGRAM_API_KEY=your_api_key_here
+export DEEPGRAM_API_KEY=E1509eb07ebf17087953db0dff6ed25fa5ac3c95
 
 # For GPU acceleration (automatic if available)
 export CUDA_VISIBLE_DEVICES=0

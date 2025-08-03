@@ -28,6 +28,12 @@ except ImportError:
     SOUNDDEVICE_AVAILABLE = False
     print("Note: sounddevice not available - desktop streaming disabled")
 
+# Check for Deepgram API key
+if os.environ.get("DEEPGRAM_API_KEY"):
+    print("✓ Deepgram API key detected")
+else:
+    print("ℹ️ No DEEPGRAM_API_KEY found - Deepgram option will be disabled")
+
 # Constants
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 1024
@@ -49,6 +55,12 @@ mobile_audio_buffer = []
 mobile_buffer_size = int(SAMPLE_RATE * 3)  # 3 seconds of audio
 last_mobile_process_time = 0
 mobile_processing = False
+
+# Transcription settings
+current_transcription_engine = "whisper"
+current_whisper_model_size = "tiny"
+current_language = "en"
+current_buffer_duration = 3.0
 
 
 def get_audio_devices():
@@ -95,11 +107,11 @@ def audio_callback(indata, frames, time_info, status):
 
 def process_audio_stream():
     """Process audio from queue and transcribe"""
-    global transcriptions, json_extractions
+    global transcriptions, json_extractions, current_buffer_duration, current_language
     
     # Buffer for accumulating audio
     audio_buffer = []
-    buffer_duration = 3.0  # Process every 3 seconds
+    buffer_duration = current_buffer_duration  # Use configurable duration
     buffer_size = int(buffer_duration * SAMPLE_RATE)
     
     while is_streaming:
@@ -113,10 +125,26 @@ def process_audio_stream():
                 # Convert to numpy array
                 audio_data = np.array(audio_buffer[:buffer_size], dtype=np.float32)
                 
-                # Transcribe with Whisper
-                if whisper_model is not None:
-                    result = whisper_model.transcribe(audio_data, language='en')
+                # Transcribe with configured engine
+                if current_transcription_engine == "whisper" and whisper_model is not None:
+                    result = whisper_model.transcribe(audio_data, language=current_language)
                     transcript = result['text'].strip()
+                elif current_transcription_engine == "deepgram":
+                    # Use Deepgram for desktop streaming
+                    try:
+                        from whisper_tiny_transcription import TranscriptionManager
+                        temp_manager = TranscriptionManager(
+                            engine_type="deepgram",
+                            language=current_language
+                        )
+                        # Convert audio to bytes for Deepgram
+                        audio_bytes = (audio_data * 32768).astype(np.int16).tobytes()
+                        transcript = temp_manager.engine.transcribe(audio_bytes)
+                    except Exception as e:
+                        print(f"Deepgram error: {e}")
+                        transcript = f"[Deepgram error: {str(e)}]"
+                else:
+                    transcript = ""
                     
                     if transcript:
                         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -155,10 +183,37 @@ def process_audio_stream():
             print(f"Processing error: {e}")
 
 
+def update_transcription_settings(engine, model_size, language, buffer_duration):
+    """Update transcription settings"""
+    global current_transcription_engine, current_whisper_model_size, current_language, current_buffer_duration
+    global whisper_model, mobile_buffer_size
+    
+    # Update settings
+    current_transcription_engine = engine
+    current_whisper_model_size = model_size
+    current_language = language
+    current_buffer_duration = float(buffer_duration)
+    
+    # Update mobile buffer size
+    mobile_buffer_size = int(SAMPLE_RATE * current_buffer_duration)
+    
+    # Reload Whisper model if size changed
+    if engine == "whisper" and whisper_model is not None:
+        # Check if we need to reload the model
+        current_size = getattr(whisper_model, 'model_size', 'tiny')
+        if current_size != model_size:
+            print(f"Reloading Whisper model: {model_size}")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            whisper_model = whisper.load_model(model_size, device=device)
+            print(f"Whisper {model_size} model loaded on {device}")
+    
+    return f"Settings updated: {engine} ({model_size if engine == 'whisper' else 'API'}), Language: {language}, Buffer: {buffer_duration}s"
+
+
 def start_streaming(audio_device=None):
     """Start audio streaming"""
     global is_streaming, audio_queue, stream_thread, transcription_thread, current_device
-    global whisper_model, extraction_manager
+    global whisper_model, extraction_manager, current_whisper_model_size
     
     if is_streaming:
         return "⚠️ Already streaming!", "", ""
@@ -168,11 +223,16 @@ def start_streaming(audio_device=None):
         return "❌ Desktop streaming not available. Please use the mobile recording option.", "", ""
     
     # Initialize models if not already done
-    if whisper_model is None:
-        print("Loading Whisper model...")
+    if current_transcription_engine == "whisper" and whisper_model is None:
+        print(f"Loading Whisper {current_whisper_model_size} model...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        whisper_model = whisper.load_model("tiny", device=device)
-        print(f"Whisper model loaded on {device}")
+        whisper_model = whisper.load_model(current_whisper_model_size, device=device)
+        whisper_model.model_size = current_whisper_model_size  # Store for later reference
+        print(f"Whisper {current_whisper_model_size} model loaded on {device}")
+    elif current_transcription_engine == "deepgram":
+        if not os.environ.get("DEEPGRAM_API_KEY"):
+            return "❌ Error: DEEPGRAM_API_KEY not set in environment", "", ""
+        print("Using Deepgram API for transcription")
     
     if extraction_manager is None:
         print("Loading Gemma extraction model...")
@@ -277,16 +337,21 @@ def refresh_display():
 def process_audio_file(audio_file):
     """Process uploaded audio file"""
     global whisper_model, extraction_manager, transcriptions, json_extractions
+    global current_transcription_engine, current_whisper_model_size, current_language
     
     if audio_file is None:
         return "Please upload an audio file", "", ""
     
     # Initialize models if not already done
-    if whisper_model is None:
-        print("Loading Whisper model...")
+    if current_transcription_engine == "whisper" and whisper_model is None:
+        print(f"Loading Whisper {current_whisper_model_size} model...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        whisper_model = whisper.load_model("tiny", device=device)
-        print(f"Whisper model loaded on {device}")
+        whisper_model = whisper.load_model(current_whisper_model_size, device=device)
+        whisper_model.model_size = current_whisper_model_size
+        print(f"Whisper {current_whisper_model_size} model loaded on {device}")
+    elif current_transcription_engine == "deepgram":
+        if not os.environ.get("DEEPGRAM_API_KEY"):
+            return "❌ DEEPGRAM_API_KEY not set", "", ""
     
     if extraction_manager is None:
         print("Loading Gemma extraction model...")
@@ -298,8 +363,23 @@ def process_audio_file(audio_file):
     
     try:
         # Transcribe file
-        result = whisper_model.transcribe(audio_file)
-        transcript = result['text'].strip()
+        if current_transcription_engine == "whisper":
+            result = whisper_model.transcribe(audio_file, language=current_language)
+            transcript = result['text'].strip()
+        elif current_transcription_engine == "deepgram":
+            # Use Deepgram for file transcription
+            try:
+                from whisper_tiny_transcription import TranscriptionManager
+                temp_manager = TranscriptionManager(
+                    engine_type="deepgram",
+                    language=current_language
+                )
+                transcript = temp_manager.transcribe_file(audio_file)['text']
+            except Exception as e:
+                print(f"Deepgram error: {e}")
+                transcript = f"[Deepgram error: {str(e)}]"
+        else:
+            transcript = ""
         
         if transcript:
             # Extract JSON
@@ -347,16 +427,21 @@ def process_mobile_stream(audio_chunk):
     """Process streaming audio from mobile devices"""
     global whisper_model, extraction_manager, transcriptions, json_extractions
     global mobile_audio_buffer, last_mobile_process_time, mobile_buffer_size, mobile_processing
+    global current_transcription_engine, current_whisper_model_size, current_language
     
     if audio_chunk is None:
         return "🔴 No audio received", refresh_display()[0], refresh_display()[1]
     
     # Initialize models if needed
-    if whisper_model is None:
-        print("Loading Whisper model for mobile...")
+    if current_transcription_engine == "whisper" and whisper_model is None:
+        print(f"Loading Whisper {current_whisper_model_size} model for mobile...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        whisper_model = whisper.load_model("tiny", device=device)
-        print(f"Whisper model loaded on {device}")
+        whisper_model = whisper.load_model(current_whisper_model_size, device=device)
+        whisper_model.model_size = current_whisper_model_size
+        print(f"Whisper {current_whisper_model_size} model loaded on {device}")
+    elif current_transcription_engine == "deepgram":
+        if not os.environ.get("DEEPGRAM_API_KEY"):
+            return "❌ DEEPGRAM_API_KEY not set", refresh_display()[0], refresh_display()[1]
     
     if extraction_manager is None:
         print("Loading Gemma extraction model for mobile...")
@@ -432,9 +517,29 @@ def process_mobile_stream(audio_chunk):
                 audio_to_process = audio_to_process / np.max(np.abs(audio_to_process))
             
             # Transcribe
-            print("Transcribing audio...")
-            result = whisper_model.transcribe(audio_to_process, language='en', fp16=False)
-            transcript = result['text'].strip()
+            print(f"Transcribing audio with {current_transcription_engine}...")
+            
+            if current_transcription_engine == "whisper":
+                result = whisper_model.transcribe(audio_to_process, language=current_language, fp16=False)
+                transcript = result['text'].strip()
+            elif current_transcription_engine == "deepgram":
+                # Import and use Deepgram if available
+                try:
+                    from whisper_tiny_transcription import TranscriptionManager
+                    # Create temporary manager for Deepgram with language setting
+                    temp_manager = TranscriptionManager(
+                        engine_type="deepgram",
+                        language=current_language
+                    )
+                    # Convert audio to bytes for Deepgram
+                    audio_bytes = (audio_to_process * 32768).astype(np.int16).tobytes()
+                    transcript = temp_manager.engine.transcribe(audio_bytes)
+                except Exception as e:
+                    print(f"Deepgram error: {e}")
+                    transcript = f"[Deepgram error: {str(e)}]"
+            else:
+                transcript = ""
+            
             print(f"Transcription result: '{transcript}'")
             
             if transcript:
@@ -528,13 +633,74 @@ def create_interface():
         **Whisper** transcription → **Gemma** JSON extraction with Unsloth optimization
         """)
         
+        with gr.Tab("⚙️ Settings"):
+            gr.Markdown("### Transcription Settings")
+            
+            with gr.Row():
+                with gr.Column():
+                    transcription_engine = gr.Radio(
+                        ["whisper", "deepgram"],
+                        value="whisper",
+                        label="Transcription Engine",
+                        info="Choose between local Whisper or Deepgram API"
+                    )
+                    
+                    whisper_model_size = gr.Dropdown(
+                        ["tiny", "base", "small", "medium", "large"],
+                        value="tiny",
+                        label="Whisper Model Size",
+                        info="Larger models are more accurate but slower",
+                        visible=True
+                    )
+                    
+                    # Show/hide Whisper options based on engine selection
+                    def update_model_visibility(engine):
+                        return gr.update(visible=(engine == "whisper"))
+                    
+                    transcription_engine.change(
+                        fn=update_model_visibility,
+                        inputs=[transcription_engine],
+                        outputs=[whisper_model_size]
+                    )
+                
+                with gr.Column():
+                    language = gr.Dropdown(
+                        ["en", "es", "fr", "de", "it", "pt", "ru", "ja", "ko", "zh"],
+                        value="en",
+                        label="Language",
+                        info="Language code for transcription"
+                    )
+                    
+                    buffer_duration = gr.Slider(
+                        minimum=1.0,
+                        maximum=10.0,
+                        value=3.0,
+                        step=0.5,
+                        label="Buffer Duration (seconds)",
+                        info="How much audio to accumulate before processing"
+                    )
+                    
+                    apply_settings_btn = gr.Button("Apply Settings", variant="primary")
+                    settings_status = gr.Textbox(
+                        label="Settings Status",
+                        value="Default settings active",
+                        interactive=False
+                    )
+            
+            gr.Markdown("""
+            ### Notes:
+            - **Whisper**: Runs locally, no API key needed. Tiny/Base are fast, Large is most accurate.
+            - **Deepgram**: Requires API key set as environment variable: `export DEEPGRAM_API_KEY=your_key`
+            - **Buffer Duration**: Shorter = more responsive but may miss context. Longer = better context but more delay.
+            """)
+        
         with gr.Tab("🎤 Live Microphone"):
             gr.Markdown("""
             ### Live Audio Streaming
             
             **Desktop**: Uses system microphone for real-time streaming
             
-            **Mobile**: Click the microphone icon to start live streaming. Audio is processed every 3 seconds.
+            **Mobile**: Click the microphone icon to start live streaming. Audio is processed based on buffer duration.
             """)
             
             with gr.Row():
@@ -665,6 +831,13 @@ def create_interface():
         clear_buffer_btn.click(
             fn=clear_mobile_buffer,
             outputs=[mobile_status]
+        )
+        
+        # Wire up events for settings
+        apply_settings_btn.click(
+            fn=update_transcription_settings,
+            inputs=[transcription_engine, whisper_model_size, language, buffer_duration],
+            outputs=[settings_status]
         )
         
         # Wire up events for file processing

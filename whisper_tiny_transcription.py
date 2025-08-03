@@ -122,7 +122,7 @@ class WhisperEngine(TranscriptionEngine):
 class DeepgramEngine(TranscriptionEngine):
     """Deepgram API-based transcription engine"""
     
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, language="en"):
         if not REQUESTS_AVAILABLE:
             raise RuntimeError("requests library not available")
         
@@ -135,6 +135,7 @@ class DeepgramEngine(TranscriptionEngine):
             "Authorization": f"Token {self.api_key}",
             "Content-Type": "audio/wav"
         }
+        self.language = language
         logger.info("Deepgram engine initialized")
     
     def transcribe(self, audio_data: bytes) -> str:
@@ -152,8 +153,8 @@ class DeepgramEngine(TranscriptionEngine):
         # Send to Deepgram
         params = {
             "model": "nova-2",
-            "language": "en",
-            "punctuate": True
+            "language": self.language,
+            "punctuate": "true"  # Deepgram expects string, not boolean
         }
         
         response = requests.post(
@@ -180,7 +181,7 @@ class DeepgramEngine(TranscriptionEngine):
         response = requests.post(
             self.url,
             headers=self.headers,
-            params={"model": "nova-2", "language": "en", "punctuate": True},
+            params={"model": "nova-2", "language": self.language, "punctuate": "true"},  # String, not boolean
             data=audio_data
         )
         

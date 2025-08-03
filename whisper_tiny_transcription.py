@@ -12,6 +12,8 @@ import logging
 from typing import Optional, Callable, Dict, List, Tuple
 from datetime import datetime
 import numpy as np
+import queue
+import threading
 
 # Whisper imports
 try:
@@ -198,9 +200,10 @@ class StreamingTranscriber:
         self.buffer_duration = buffer_duration
         self.buffer_size = int(SAMPLE_RATE * buffer_duration * SAMPLE_WIDTH)
         self.audio_buffer = bytearray()
-        self.transcription_queue = asyncio.Queue()
+        self.transcription_queue = queue.Queue(maxsize=10)
         self.callbacks = []
         self._running = False
+        self._worker_thread = None
     
     def add_callback(self, callback: Callable[[str, float], None]):
         """Add callback for transcription results (text, timestamp)"""
@@ -226,18 +229,15 @@ class StreamingTranscriber:
             timestamp = time.time()
             try:
                 self.transcription_queue.put_nowait((audio_to_transcribe, timestamp))
-            except asyncio.QueueFull:
+            except queue.Full:
                 logger.warning("Transcription queue full, dropping audio segment")
     
-    async def _transcription_worker(self):
-        """Background worker for transcription"""
+    def _transcription_worker(self):
+        """Background worker for transcription (runs in thread)"""
         while self._running:
             try:
-                # Get audio from queue
-                audio_data, timestamp = await asyncio.wait_for(
-                    self.transcription_queue.get(), 
-                    timeout=1.0
-                )
+                # Get audio from queue with timeout
+                audio_data, timestamp = self.transcription_queue.get(timeout=1.0)
                 
                 # Transcribe
                 start_time = time.time()
@@ -254,7 +254,7 @@ class StreamingTranscriber:
                         except Exception as e:
                             logger.error(f"Callback error: {e}")
                 
-            except asyncio.TimeoutError:
+            except queue.Empty:
                 continue
             except Exception as e:
                 logger.error(f"Transcription error: {e}")
@@ -262,14 +262,23 @@ class StreamingTranscriber:
     async def start(self):
         """Start streaming transcriber"""
         self._running = True
-        self._worker_task = asyncio.create_task(self._transcription_worker())
+        # Start worker thread
+        self._worker_thread = threading.Thread(target=self._transcription_worker, daemon=True)
+        self._worker_thread.start()
         logger.info("Streaming transcriber started")
     
     async def stop(self):
         """Stop streaming transcriber"""
         self._running = False
-        if hasattr(self, '_worker_task'):
-            await self._worker_task
+        # Clear the queue
+        while not self.transcription_queue.empty():
+            try:
+                self.transcription_queue.get_nowait()
+            except queue.Empty:
+                break
+        # Wait for thread to finish
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=2.0)
         logger.info("Streaming transcriber stopped")
     
     def get_final_transcription(self) -> str:

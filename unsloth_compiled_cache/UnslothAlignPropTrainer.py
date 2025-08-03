@@ -138,7 +138,7 @@ class UnslothAlignPropConfig(AlignPropConfig):
     )
     def __init__(
         self,
-        exp_name = 'test_unsloth_gemma',
+        exp_name = 'gradio_app_integrated',
         run_name = '',
         seed = 3407,
         log_with = None,

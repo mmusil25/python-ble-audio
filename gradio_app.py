@@ -34,6 +34,9 @@ from gemma_3n_json_extractor import (
     TRANSFORMERS_AVAILABLE
 )
 from simulate_live_mic import FileStreamSource
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Global state
 streaming_manager = None
@@ -89,9 +92,12 @@ def initialize_pipeline(transcription_engine="whisper", extraction_model="mock")
     return "Pipeline initialized successfully!", None
 
 
-def process_audio_file(audio_file, transcription_engine="whisper", extraction_model="mock"):
+def process_audio_file(audio_file, file_any, transcription_engine="whisper", extraction_model="mock"):
     """Process uploaded audio file"""
-    if audio_file is None:
+    # Use whichever input has a file
+    input_file = audio_file or file_any
+    
+    if input_file is None:
         return "Please upload an audio file", None, None, None
     
     # Initialize if needed
@@ -103,7 +109,7 @@ def process_audio_file(audio_file, transcription_engine="whisper", extraction_mo
     # Process file
     try:
         # Transcribe
-        result = transcription_manager.transcribe_file(audio_file)
+        result = transcription_manager.transcribe_file(input_file)
         transcript = result["text"]
         
         # Extract JSON
@@ -120,7 +126,8 @@ def process_audio_file(audio_file, transcription_engine="whisper", extraction_mo
         # Create summary
         summary = f"""
 ### Summary
-- **File:** {Path(audio_file).name}
+- **File:** {Path(input_file).name}
+- **File Size:** {os.path.getsize(input_file) / (1024*1024):.2f} MB
 - **Transcription Length:** {len(transcript.split())} words
 - **Intent:** {extraction['intent']}
 - **Entities:** {', '.join(extraction['entities']) if extraction['entities'] else 'None'}
@@ -130,7 +137,9 @@ def process_audio_file(audio_file, transcription_engine="whisper", extraction_mo
         return "File processed successfully!", transcription_display, json_display, summary
         
     except Exception as e:
-        return f"Error processing file: {str(e)}", None, None, None
+        import traceback
+        error_msg = f"Error processing file: {str(e)}\n\nSupported formats: WAV, MP3, FLAC, OGG, M4A, AAC, WMA, OPUS, WebM\n\nDetails: {traceback.format_exc()}"
+        return error_msg, None, None, None
 
 
 async def start_streaming(audio_source="mock", audio_device=None, transcription_engine="whisper", extraction_model="mock"):
@@ -140,10 +149,11 @@ async def start_streaming(audio_source="mock", audio_device=None, transcription_
     if is_streaming:
         return "Already streaming!", None, None
     
-    # Always reinitialize to ensure fresh event loop context
-    status, _ = initialize_pipeline(transcription_engine, extraction_model)
-    if "Error" in status:
-        return status, None, None
+    # Initialize pipeline if needed
+    if transcription_manager is None or extraction_manager is None:
+        status, _ = initialize_pipeline(transcription_engine, extraction_model)
+        if "Error" in status:
+            return status, None, None
     
     # Clear history
     transcription_history = []
@@ -171,30 +181,45 @@ async def start_streaming(audio_source="mock", audio_device=None, transcription_
     # Transcription callback
     def transcription_callback(text: str, timestamp: float):
         if text.strip():
-            # Process transcription
-            extraction = extraction_manager.process_streaming_transcript(text, timestamp)
-            
-            # Add to history
-            transcription_history.append({
-                "time": datetime.fromtimestamp(timestamp).strftime("%H:%M:%S"),
-                "text": text
-            })
-            
-            extraction_history.append({
-                "time": datetime.fromtimestamp(timestamp).strftime("%H:%M:%S"),
-                "intent": extraction['intent'],
-                "entities": ', '.join(extraction['entities'])
-            })
+            try:
+                # Process transcription
+                extraction = extraction_manager.process_streaming_transcript(text, timestamp)
+                
+                # Add to history
+                transcription_history.append({
+                    "time": datetime.fromtimestamp(timestamp).strftime("%H:%M:%S"),
+                    "text": text
+                })
+                
+                extraction_history.append({
+                    "time": datetime.fromtimestamp(timestamp).strftime("%H:%M:%S"),
+                    "intent": extraction['intent'],
+                    "entities": ', '.join(extraction['entities'])
+                })
+            except Exception as e:
+                logger.error(f"Error in transcription callback: {e}")
     
-    # Connect pipeline
-    transcription_manager.streaming_transcriber.add_callback(transcription_callback)
-    await transcription_manager.transcribe_stream(streaming_manager.add_callback)
-    
-    # Start streaming
-    is_streaming = True
-    
-    # Run in background
-    asyncio.create_task(streaming_manager.start_streaming())
+    # Set up the pipeline connections
+    try:
+        # Clear any existing callbacks first
+        transcription_manager.streaming_transcriber.callbacks.clear()
+        
+        # Add new callback
+        transcription_manager.streaming_transcriber.add_callback(transcription_callback)
+        
+        # Start transcription stream
+        await transcription_manager.transcribe_stream(streaming_manager.add_callback)
+        
+        # Start streaming
+        is_streaming = True
+        
+        # Start audio streaming in background task
+        asyncio.create_task(streaming_manager.start_streaming())
+        
+    except Exception as e:
+        is_streaming = False
+        logger.error(f"Error starting streaming: {e}")
+        return f"Error starting streaming: {str(e)}", None, None
     
     # Status message
     if audio_source == "mic":
@@ -209,16 +234,22 @@ async def start_streaming(audio_source="mock", audio_device=None, transcription_
 
 async def stop_streaming():
     """Stop live streaming"""
-    global streaming_manager, is_streaming
+    global streaming_manager, is_streaming, transcription_manager
     
     if not is_streaming:
         return "Not currently streaming", None, None
     
     # Stop streaming
     is_streaming = False
-    if streaming_manager:
-        await transcription_manager.stop_streaming()
-        await streaming_manager.stop_streaming()
+    
+    try:
+        if transcription_manager:
+            await transcription_manager.stop_streaming()
+        if streaming_manager:
+            await streaming_manager.stop_streaming()
+    except Exception as e:
+        logger.error(f"Error stopping streaming: {e}")
+        # Continue with cleanup even if there's an error
     
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -295,15 +326,36 @@ def create_app():
         """)
         
         with gr.Tab("File Processing"):
-            gr.Markdown("### Upload and process audio files")
+            gr.Markdown("""
+            ### Upload and process audio files
+            
+            **Supported formats:** WAV, MP3, FLAC, OGG, M4A, AAC, WMA, OPUS, WebM, MP4, M4B
+            
+            Use either upload method below - the standard audio input for common formats, or the file input for any audio format.
+            """)
             
             with gr.Row():
                 with gr.Column():
+                    # Add both standard audio input and file input for maximum flexibility
                     file_input = gr.Audio(
-                        label="Upload Audio File",
+                        label="Upload Audio File (WAV/MP3/FLAC/OGG/M4A)",
                         type="filepath",
                         sources=["upload", "microphone"]
                     )
+                    
+                    # Alternative file input for any audio format
+                    file_input_any = gr.File(
+                        label="Or Upload Any Audio File (Alternative Input)",
+                        file_types=[".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus", ".webm", ".mp4", ".m4b", ".3gp", ".amr"],
+                        type="filepath"
+                    )
+                    
+                    gr.Markdown("""
+                    💡 **Tips:**
+                    - Maximum file size depends on your system memory
+                    - Longer files will take more time to process
+                    - For best results, use high-quality audio recordings
+                    """)
                     
                     with gr.Row():
                         trans_engine = gr.Radio(
@@ -317,7 +369,7 @@ def create_app():
                             label="Extraction Model"
                         )
                     
-                    process_btn = gr.Button("Process File", variant="primary")
+                    process_btn = gr.Button("🎵 Process Audio File", variant="primary", size="lg")
                 
                 with gr.Column():
                     file_status = gr.Textbox(label="Status", lines=1)
@@ -407,9 +459,10 @@ def create_app():
             ### Configuration
             
             - **Whisper Model:** Tiny (fast, runs on CPU/GPU)
-            - **Audio Format:** 16kHz, mono, 16-bit PCM
+            - **Audio Processing:** Automatic resampling to 16kHz
             - **Streaming Buffer:** 2 seconds
             - **Output Directory:** `gradio_recordings/`
+            - **Supported Audio Formats:** WAV, MP3, FLAC, OGG, M4A, AAC, WMA, OPUS, WebM, MP4, M4B, 3GP, AMR
             
             ### API Keys
             
@@ -459,16 +512,30 @@ def create_app():
         # Event handlers
         process_btn.click(
             fn=process_audio_file,
-            inputs=[file_input, trans_engine, ext_model],
+            inputs=[file_input, file_input_any, trans_engine, ext_model],
             outputs=[file_status, file_transcription, file_json, file_summary]
         )
         
-        # Use sync wrappers to avoid event loop conflicts
+        # Clear the other input when one is used
+        file_input.change(
+            fn=lambda x: None if x else gr.update(),
+            inputs=[file_input],
+            outputs=[file_input_any]
+        )
+        
+        file_input_any.change(
+            fn=lambda x: None if x else gr.update(),
+            inputs=[file_input_any],
+            outputs=[file_input]
+        )
+        
+        # Create simpler sync wrappers
         def start_streaming_sync(*args):
             """Synchronous wrapper for start_streaming"""
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
+                # Create new instances to avoid event loop conflicts
                 return loop.run_until_complete(start_streaming(*args))
             finally:
                 loop.close()

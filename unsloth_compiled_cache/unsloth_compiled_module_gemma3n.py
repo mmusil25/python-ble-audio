@@ -160,7 +160,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from typing import Any, List, Optional, Tuple, Union, Dict, Set, Callable
-from transformers.models.gemma3n.modeling_gemma3n import (F, Callable, Sequence, Optional, Union, torch, nn, ACT2FN, Cache, SlidingWindowLayer, GenerationMixin, FlashAttentionKwargs, BaseModelOutputWithPast, ModelOutput, CausalLMOutputWithPast, ROPE_INIT_FUNCTIONS, dynamic_rope_update, ALL_ATTENTION_FUNCTIONS, PreTrainedModel, Unpack, can_return_tuple, AutoModel, Gemma3nAudioConfig, Gemma3nConfig, Gemma3nTextConfig, Gemma3nVisionConfig, logger, __name__, Gemma3nModel, Gemma3nCausalLMOutputWithPast, Gemma3nPreTrainedModel, Gemma3nTextModel, Gemma3nForCausalLM, Gemma3nForConditionalGeneration, Gemma3nAudioConformerLightConv1d, Gemma3nAudioRelativePositionEmbedding, Gemma3nAudioSSCPConvBlock)
+from transformers.models.gemma3n.modeling_gemma3n import (F, Callable, Sequence, Optional, Union, torch, nn, ACT2FN, Cache, SlidingWindowLayer, GenerationMixin, FlashAttentionKwargs, BaseModelOutputWithPast, ModelOutput, CausalLMOutputWithPast, ROPE_INIT_FUNCTIONS, dynamic_rope_update, ALL_ATTENTION_FUNCTIONS, PreTrainedModel, Unpack, can_return_tuple, AutoModel, Gemma3nAudioConfig, Gemma3nConfig, Gemma3nTextConfig, Gemma3nVisionConfig, logger, __name__, Gemma3nModel, Gemma3nCausalLMOutputWithPast, Gemma3nPreTrainedModel, Gemma3nTextModel, Gemma3nForCausalLM, Gemma3nForConditionalGeneration, Gemma3nAudioSSCPConvBlock, Gemma3nAudioConformerLightConv1d, Gemma3nAudioRelativePositionEmbedding)
 
 @torch.compile(fullgraph = True, dynamic = True, options = torch_compile_options)
 def Gemma3nRMSNorm_forward(self, x: torch.Tensor) -> torch.Tensor:

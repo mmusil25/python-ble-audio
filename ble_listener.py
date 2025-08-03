@@ -14,6 +14,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Callable, Tuple
 import logging
 import numpy as np
+import queue
+import threading
 
 # Audio processing imports
 try:
@@ -75,27 +77,36 @@ class MicrophoneSource(AudioSource):
             raise RuntimeError("sounddevice library not available")
         self.device_index = device_index
         self.stream = None
-        self.audio_queue = asyncio.Queue()
         self._running = False
+        # Use thread-safe queue instead of asyncio queue
+        self.audio_queue = queue.Queue(maxsize=100)
         
     def _audio_callback(self, indata, frames, time_info, status):
         """Callback for sounddevice stream"""
         if status:
             logger.warning(f"Microphone status: {status}")
         
+        # Check if we're still running
+        if not self._running:
+            return
+        
         # Convert float32 to int16 PCM
         audio_int16 = (indata * 32767).astype(np.int16)
         audio_bytes = audio_int16.tobytes()
         
-        # Non-blocking put
+        # Thread-safe put
         try:
             self.audio_queue.put_nowait(audio_bytes)
-        except asyncio.QueueFull:
+        except queue.Full:
             logger.warning("Audio queue full, dropping chunk")
+        except Exception as e:
+            logger.error(f"Audio callback error: {e}")
     
     async def start(self):
         """Start microphone capture"""
         self._running = True
+        # Create a fresh queue for this session
+        self.audio_queue = asyncio.Queue()
         
         # List available devices
         devices = sd.query_devices()
@@ -123,6 +134,14 @@ class MicrophoneSource(AudioSource):
             self.stream.stop()
             self.stream.close()
             self.stream = None
+        
+        # Clear the thread-safe queue
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+        
         logger.info("Microphone stopped")
     
     async def read_chunk(self) -> Optional[bytes]:
@@ -131,10 +150,12 @@ class MicrophoneSource(AudioSource):
             return None
         
         try:
-            # Wait for audio with timeout
-            chunk = await asyncio.wait_for(self.audio_queue.get(), timeout=0.1)
+            # Non-blocking get from thread-safe queue
+            chunk = self.audio_queue.get_nowait()
             return chunk
-        except asyncio.TimeoutError:
+        except queue.Empty:
+            # Sleep a bit to avoid busy waiting
+            await asyncio.sleep(0.01)
             return None
     
     def is_connected(self) -> bool:

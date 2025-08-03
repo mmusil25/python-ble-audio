@@ -45,10 +45,11 @@ python test_unsloth_gemma.py
 ## 📋 Requirements
 
 - Python 3.8+
-- CUDA-capable GPU (optional but recommended)
+- CUDA-capable GPU (optional but recommended for fast inference)
 - Ubuntu/Linux (recommended) or Windows with WSL2
 - For actual BLE: Bluetooth adapter
 - For microphone: Audio input device (not available in WSL)
+- Unsloth for 2x faster Gemma 3n inference (automatically installed)
 
 ## 🚀 Quick Start
 

@@ -67,10 +67,25 @@ def get_audio_devices():
     """Get list of available audio input devices"""
     devices = []
     
+    print("\n=== Querying Audio Devices ===")
+    
     if SOUNDDEVICE_AVAILABLE:
         try:
             # Try to get system audio devices
             device_list = sd.query_devices()
+            print(f"Found {len(device_list)} total audio devices")
+            
+            # Log all devices to console
+            print("\nAll Audio Devices:")
+            for i, device in enumerate(device_list):
+                print(f"  [{i}] {device['name']}")
+                print(f"      - Input channels: {device['max_input_channels']}")
+                print(f"      - Output channels: {device['max_output_channels']}")
+                print(f"      - Default sample rate: {device['default_samplerate']}")
+                print(f"      - Host API: {device['hostapi']}")
+            
+            # Filter for input devices
+            print("\nInput Devices Available for Selection:")
             for i, device in enumerate(device_list):
                 if device['max_input_channels'] > 0:
                     devices.append({
@@ -79,8 +94,21 @@ def get_audio_devices():
                         'channels': device['max_input_channels'],
                         'label': f"[{i}] {device['name']} ({device['max_input_channels']} ch)"
                     })
+                    print(f"  [{i}] {device['name']} - {device['max_input_channels']} channels")
+            
+            # Also log the default input device
+            try:
+                default_input = sd.query_devices(kind='input')
+                print(f"\nDefault Input Device: [{default_input['index']}] {default_input['name']}")
+            except Exception as e:
+                print(f"Could not query default input device: {e}")
+                
         except Exception as e:
-            print(f"Note: System audio devices not available: {e}")
+            print(f"Error querying system audio devices: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("sounddevice module not available - using browser default")
     
     if not devices:
         # Return default option for mobile/web or when sounddevice not available
@@ -90,8 +118,25 @@ def get_audio_devices():
             'channels': 1,
             'label': 'Browser Default Microphone'
         })
+        print("No system audio devices found - using browser default")
+    
+    print(f"\nTotal input devices available: {len(devices)}")
+    print("=== End Device Query ===\n")
     
     return devices
+
+
+def refresh_audio_devices():
+    """Refresh the list of audio devices and return updated dropdown"""
+    devices = get_audio_devices()
+    device_choices = [d['label'] for d in devices]
+    
+    # Return the updated choices for the dropdown
+    return gr.Dropdown(
+        choices=device_choices,
+        value=device_choices[0] if device_choices else None,
+        visible=len(device_choices) > 1
+    )
 
 
 def audio_callback(indata, frames, time_info, status):
@@ -244,12 +289,16 @@ def start_streaming(audio_device=None):
     
     # Parse device index
     device_idx = None
-    if audio_device and audio_device != "Default Microphone":
+    if audio_device and audio_device != "Default Microphone" and audio_device != "Browser Default Microphone":
         try:
             # Extract device index from label "[idx] Device Name"
             device_idx = int(audio_device.split(']')[0].strip('['))
-        except:
+            print(f"Selected device index: {device_idx} from '{audio_device}'")
+        except Exception as e:
+            print(f"Warning: Could not parse device index from '{audio_device}': {e}")
             device_idx = None
+    else:
+        print(f"Using default device (device selection: '{audio_device}')")
     
     # Initialize audio
     audio_queue = queue.Queue()
@@ -262,6 +311,22 @@ def start_streaming(audio_device=None):
     
     # Start audio stream
     try:
+        print(f"\nAttempting to start audio stream...")
+        print(f"  Device index: {device_idx}")
+        print(f"  Sample rate: {SAMPLE_RATE} Hz")
+        print(f"  Channels: {CHANNELS}")
+        print(f"  Block size: {CHUNK_SIZE}")
+        
+        # Query the specific device info before starting
+        if device_idx is not None:
+            try:
+                device_info = sd.query_devices(device_idx)
+                print(f"  Selected device: {device_info['name']}")
+                print(f"  Max input channels: {device_info['max_input_channels']}")
+                print(f"  Default sample rate: {device_info['default_samplerate']}")
+            except Exception as e:
+                print(f"  Warning: Could not query device {device_idx}: {e}")
+        
         stream = sd.InputStream(
             device=device_idx,
             channels=CHANNELS,
@@ -275,11 +340,26 @@ def start_streaming(audio_device=None):
         stream_thread = stream
         
         device_name = audio_device if audio_device else "default"
+        print(f"✅ Audio stream started successfully!")
         return f"✅ Streaming started! Using device: {device_name}", "", ""
         
     except Exception as e:
         is_streaming = False
-        return f"❌ Error: {str(e)}", "", ""
+        error_msg = str(e)
+        
+        # Provide more helpful error messages
+        if "Invalid device" in error_msg:
+            error_msg += f" (Device index {device_idx} not found. Try refreshing devices.)"
+        elif "Invalid number of channels" in error_msg:
+            error_msg += f" (Device doesn't support {CHANNELS} channel(s))"
+        elif "Invalid sample rate" in error_msg:
+            error_msg += f" (Device doesn't support {SAMPLE_RATE} Hz sample rate)"
+        
+        print(f"❌ Failed to start audio stream: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        
+        return f"❌ Error: {error_msg}", "", ""
 
 
 def stop_streaming():
@@ -715,6 +795,7 @@ def create_interface():
                             value=device_choices[0] if device_choices else None,
                             visible=len(device_choices) > 1  # Hide if only default option
                         )
+                        refresh_devices_btn = gr.Button("🔄 Refresh Devices", size="sm")
                     
                     # Desktop streaming controls
                     if SOUNDDEVICE_AVAILABLE:
@@ -817,6 +898,12 @@ def create_interface():
         refresh_btn.click(
             fn=refresh_display,
             outputs=[transcriptions_display, json_display, status_text]
+        )
+        
+        # Wire up events for device refresh
+        refresh_devices_btn.click(
+            fn=refresh_audio_devices,
+            outputs=[audio_device]
         )
         
         # Wire up events for mobile audio streaming

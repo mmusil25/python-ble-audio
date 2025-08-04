@@ -1,0 +1,8 @@
+{
+  "model_version": "placeholder_v1",
+  "input_max_length": 128,
+  "output_max_length": 128,
+  "vocab_size": 256000,
+  "model_type": "placeholder",
+  "notes": "This is a placeholder model. Replace with actual Gemma TFLite model. See GEMMA_CONVERSION_GUIDE.md for instructions."
+}

@@ -2,6 +2,7 @@ package com.gemmaudio.processor
 
 import android.app.Application
 import android.content.ContentResolver
+import android.content.Context
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
@@ -29,7 +30,9 @@ data class ProcessingState(
     val error: String? = null,
     val processingTime: Long = 0,
     val isModelLoaded: Boolean = false,
-    val modelDownloadInstructions: String? = null
+    val modelDownloadInstructions: String? = null,
+    val availableAudioDevices: List<AudioDevice> = emptyList(),
+    val selectedAudioDevice: AudioDevice? = null
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -40,9 +43,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var mediaRecorder: MediaRecorder? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var currentRecordingFile: File? = null
+    private val audioDeviceManager = AudioDeviceManager(application)
     
     init {
         initializeSpeechRecognizer()
+        updateAvailableAudioDevices()
         viewModelScope.launch {
             _state.value = _state.value.copy(status = "Checking for Gemma model...")
             try {
@@ -86,8 +91,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onError(error: Int) {
+                    val errorMessage = when (error) {
+                        SpeechRecognizer.ERROR_AUDIO -> "Audio recording error. Check microphone permissions."
+                        SpeechRecognizer.ERROR_CLIENT -> "Client side error. Please try again."
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions. Please grant microphone access."
+                        SpeechRecognizer.ERROR_NETWORK -> "Network error. Check your internet connection."
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout. Please try again."
+                        SpeechRecognizer.ERROR_NO_MATCH -> "No speech detected. Please speak clearly into the microphone."
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognition service busy. Please wait and try again."
+                        SpeechRecognizer.ERROR_SERVER -> "Server error. Please try again later."
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input. Please try speaking again."
+                        else -> "Unknown error occurred (Error code: $error)"
+                    }
                     _state.value = _state.value.copy(
-                        error = "Speech recognition error: $error"
+                        error = errorMessage
                     )
                 }
                 
@@ -193,6 +210,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 setOutputFile(currentRecordingFile?.absolutePath)
+                
+                // Set preferred audio device if available (API 28+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val audioManager = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        _state.value.selectedAudioDevice?.let { device ->
+                            val audioDevices = audioManager.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)
+                            val preferredDevice = audioDevices.find { it.id == device.id }
+                            preferredDevice?.let {
+                                setPreferredDevice(it)
+                            }
+                        }
+                    }
+                }
+                
                 prepare()
                 start()
             }
@@ -298,6 +330,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             status = "Running in demo mode",
             error = null
         )
+    }
+    
+    private fun updateAvailableAudioDevices() {
+        val devices = audioDeviceManager.getAvailableInputDevices()
+        _state.value = _state.value.copy(
+            availableAudioDevices = devices,
+            selectedAudioDevice = devices.firstOrNull()
+        )
+    }
+    
+    fun selectAudioDevice(device: AudioDevice) {
+        _state.value = _state.value.copy(selectedAudioDevice = device)
+        audioDeviceManager.setPreferredInputDevice(device.id)
     }
     
     override fun onCleared() {

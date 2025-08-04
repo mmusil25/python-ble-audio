@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,6 +32,20 @@ fun LiveRecordingScreen(viewModel: MainViewModel) {
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Audio Device Selection
+        if (state.availableAudioDevices.isNotEmpty()) {
+            AudioDeviceSelector(
+                devices = state.availableAudioDevices,
+                selectedDevice = state.selectedAudioDevice,
+                onDeviceSelected = { device ->
+                    viewModel.selectAudioDevice(device)
+                },
+                enabled = !state.isRecording
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+        
         // Recording button with animation
         RecordingButton(
             isRecording = state.isRecording,
@@ -241,4 +256,104 @@ fun PulsingDot() {
                 shape = CircleShape
             )
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AudioDeviceSelector(
+    devices: List<AudioDevice>,
+    selectedDevice: AudioDevice?,
+    onDeviceSelected: (AudioDevice) -> Unit,
+    enabled: Boolean = true
+) {
+    var expanded by remember { mutableStateOf(false) }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (enabled) 
+                MaterialTheme.colorScheme.surface 
+            else 
+                MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Audio Input Device",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Audio Settings",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { if (enabled) expanded = !expanded }
+            ) {
+                TextField(
+                    value = selectedDevice?.name ?: "Select Device",
+                    onValueChange = {},
+                    readOnly = true,
+                    enabled = enabled,
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(),
+                    colors = ExposedDropdownMenuDefaults.textFieldColors()
+                )
+                
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    devices.forEach { device ->
+                        DropdownMenuItem(
+                            text = { 
+                                Column {
+                                    Text(
+                                        text = device.name,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    if (device == selectedDevice) {
+                                        Text(
+                                            text = "Currently selected",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            },
+                            onClick = {
+                                onDeviceSelected(device)
+                                expanded = false
+                            },
+                            leadingIcon = if (device == selectedDevice) {
+                                {
+                                    Icon(
+                                        imageVector = Icons.Default.Mic,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            } else null
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

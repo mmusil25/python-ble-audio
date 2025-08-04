@@ -45,16 +45,17 @@ class GemmaProcessor(private val context: Context) {
                 Log.d(TAG, "Using CPU with 4 threads")
             }
             
-            interpreter = Interpreter(modelBuffer, options)
+            val tfliteInterpreter = Interpreter(modelBuffer, options)
+            interpreter = tfliteInterpreter
             Log.d(TAG, "Gemma model loaded successfully via TensorFlow Lite")
             
             // Log model details
-            val inputCount = interpreter.inputTensorCount
-            val outputCount = interpreter.outputTensorCount
+            val inputCount = tfliteInterpreter.inputTensorCount
+            val outputCount = tfliteInterpreter.outputTensorCount
             Log.d(TAG, "Model loaded with $inputCount inputs and $outputCount outputs")
             
             for (i in 0 until inputCount) {
-                val inputTensor = interpreter.getInputTensor(i)
+                val inputTensor = tfliteInterpreter.getInputTensor(i)
                 Log.d(TAG, "Input $i: shape=${inputTensor.shape().contentToString()}, dtype=${inputTensor.dataType()}")
             }
             

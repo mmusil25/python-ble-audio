@@ -59,12 +59,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     modelDownloadInstructions = """
                         To use Gemma on your device:
                         
-                        1. Download the Gemma 2B model from:
-                           kaggle.com/models/google/gemma/tfLite/gemma-2b-it-gpu-int4
+                        1. Download a TensorFlow Lite compatible model
+                           or convert Gemma using the provided Python script
                         
-                        2. Tap "Import Model" below to select the downloaded file
+                        2. Tap "Import Model" below to select the .tflite file
                         
-                        The model only needs to be downloaded once.
+                        The app will run in demo mode until a model is loaded.
                     """.trimIndent()
                 )
             }

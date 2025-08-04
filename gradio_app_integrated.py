@@ -206,7 +206,9 @@ def process_audio_stream():
                         # Extract JSON with Gemma
                         if extraction_manager is not None:
                             try:
-                                json_result = extraction_manager.extract_from_transcript(transcript)
+                                # Calculate timestamp in milliseconds
+                                timestamp_ms = int(time.time() * 1000)
+                                json_result = extraction_manager.extract_from_transcript(transcript, timestamp_ms)
                                 json_extractions.append({
                                     'time': timestamp,
                                     'transcript': transcript,
@@ -396,11 +398,28 @@ def refresh_display():
     # Format JSON extractions
     json_html = '<div style="font-family: monospace; font-size: 12px;">'
     for e in reversed(json_extractions[-5:]):  # Show last 5
-        json_str = json.dumps(e['json'], indent=2)
+        json_data = e['json']
+        # Format the JSON with all required fields highlighted
+        json_formatted = {
+            "transcript": json_data.get("transcript", ""),
+            "timestamp_ms": json_data.get("timestamp_ms", 0),
+            "intent": json_data.get("intent", "unknown"),
+            "entities": json_data.get("entities", [])
+        }
+        json_str = json.dumps(json_formatted, indent=2)
+        
+        # Create human-readable timestamp from milliseconds
+        ts_seconds = json_data.get("timestamp_ms", 0) / 1000
+        readable_ts = datetime.fromtimestamp(ts_seconds).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        
         json_html += f'''
-        <div style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px;">
-            <div style="color: #666; margin-bottom: 5px;">[{e["time"]}] {e["transcript"][:50]}...</div>
-            <pre style="margin: 0; overflow-x: auto;">{json_str}</pre>
+        <div style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; border: 1px solid #ddd;">
+            <div style="color: #666; margin-bottom: 5px;">
+                <strong>[{e["time"]}]</strong> Intent: <span style="color: #0066cc; font-weight: bold;">{json_data.get("intent", "unknown")}</span>
+                | Keywords: <span style="color: #008800;">{", ".join(json_data.get("entities", []))[:100] or "none"}</span>
+            </div>
+            <pre style="margin: 0; overflow-x: auto; background: white; padding: 8px; border-radius: 3px;">{json_str}</pre>
+            <div style="color: #999; font-size: 11px; margin-top: 5px;">Timestamp: {readable_ts}</div>
         </div>
         '''
     json_html += '</div>'
@@ -462,8 +481,9 @@ def process_audio_file(audio_file):
             transcript = ""
         
         if transcript:
-            # Extract JSON
-            json_result = extraction_manager.extract_from_transcript(transcript)
+            # Extract JSON with timestamp
+            timestamp_ms = int(time.time() * 1000)
+            json_result = extraction_manager.extract_from_transcript(transcript, timestamp_ms)
             
             # Add to history (for mobile recording mode)
             timestamp = datetime.now().strftime("%H:%M:%S")
@@ -489,7 +509,29 @@ def process_audio_file(audio_file):
             
             json_html = f'<div style="font-family: monospace; font-size: 12px;">'
             json_html += f'<h3>JSON Extraction:</h3>'
-            json_html += f'<pre style="padding: 10px; background: #f5f5f5; border-radius: 5px; overflow-x: auto;">{json.dumps(json_result, indent=2)}</pre>'
+            
+            # Format the JSON with all fields
+            json_formatted = {
+                "transcript": json_result.get("transcript", ""),
+                "timestamp_ms": json_result.get("timestamp_ms", 0),
+                "intent": json_result.get("intent", "unknown"),
+                "entities": json_result.get("entities", [])
+            }
+            
+            # Create human-readable timestamp
+            ts_seconds = json_result.get("timestamp_ms", 0) / 1000
+            readable_ts = datetime.fromtimestamp(ts_seconds).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            
+            json_html += f'''
+            <div style="padding: 10px; background: #f5f5f5; border-radius: 5px; border: 1px solid #ddd;">
+                <div style="margin-bottom: 10px;">
+                    <strong>Intent:</strong> <span style="color: #0066cc; font-weight: bold;">{json_result.get("intent", "unknown")}</span><br>
+                    <strong>Keywords:</strong> <span style="color: #008800;">{", ".join(json_result.get("entities", [])) or "none"}</span><br>
+                    <strong>Timestamp:</strong> <span style="color: #666;">{readable_ts}</span>
+                </div>
+                <pre style="margin: 0; padding: 10px; background: white; border-radius: 3px; overflow-x: auto;">{json.dumps(json_formatted, indent=2)}</pre>
+            </div>
+            '''
             json_html += f'</div>'
             
             # Also update the streaming display for mobile
@@ -634,7 +676,8 @@ def process_mobile_stream(audio_chunk):
                 
                 # Extract JSON
                 try:
-                    json_result = extraction_manager.extract_from_transcript(transcript)
+                    timestamp_ms = int(time.time() * 1000)
+                    json_result = extraction_manager.extract_from_transcript(transcript, timestamp_ms)
                     json_extractions.append({
                         'time': timestamp,
                         'transcript': transcript,

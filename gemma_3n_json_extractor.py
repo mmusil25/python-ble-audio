@@ -90,8 +90,12 @@ class GemmaExtractor(JSONExtractor):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
     
-    def _create_prompt(self, transcript: str) -> str:
+    def _create_prompt(self, transcript: str, timestamp_ms: int = None) -> str:
         """Create prompt for JSON extraction"""
+        # Get current timestamp if not provided
+        if timestamp_ms is None:
+            timestamp_ms = int(time.time() * 1000)
+            
         # Use apply_chat_template - check processor first, then tokenizer
         apply_template_fn = None
         if hasattr(self, 'processor') and hasattr(self.processor, 'apply_chat_template'):
@@ -103,38 +107,66 @@ class GemmaExtractor(JSONExtractor):
             messages = [
                 {
                     "role": "user",
-                    "content": f"""Extract structured information from the following transcript and return it as JSON.
+                    "content": f"""Extract keywords and intent from this text:
+"{transcript}"
 
-The JSON should follow this schema:
+Intent categories: question, request, statement, greeting, farewell, gratitude, command
+
+Extract ALL important keywords including:
+- Nouns (people, places, things, concepts)
+- Verbs (actions, activities) 
+- Times, dates, numbers
+- Descriptive words
+- Any word that carries meaning
+
+Return JSON:
 {{
-  "transcript": "the original transcript text",
-  "timestamp_ms": "current timestamp in milliseconds",
-  "intent": "the main intent or purpose of the speaker",
-  "entities": ["list", "of", "key", "entities", "mentioned"]
+  "transcript": "{transcript}",
+  "timestamp_ms": {timestamp_ms},
+  "intent": "<intent>",
+  "entities": ["<extract ALL meaningful keywords>"]
 }}
 
-Transcript: "{transcript}"
-
-Return only valid JSON, no additional text."""
+Example: "Please call John Smith at 3 PM tomorrow about the project deadline"
+{{
+  "transcript": "Please call John Smith at 3 PM tomorrow about the project deadline",
+  "timestamp_ms": 1234567890,
+  "intent": "request",
+  "entities": ["call", "John", "Smith", "3 PM", "tomorrow", "project", "deadline"]
+}}"""
                 }
             ]
             return apply_template_fn(messages, tokenize=False, add_generation_prompt=True)
         else:
             # Fallback to manual template
             prompt = f"""<start_of_turn>user
-Extract structured information from the following transcript and return it as JSON.
+Extract keywords and intent from this text:
+"{transcript}"
 
-The JSON should follow this schema:
+Intent categories: question, request, statement, greeting, farewell, gratitude, command
+
+Extract ALL important keywords including:
+- Nouns (people, places, things, concepts)
+- Verbs (actions, activities) 
+- Times, dates, numbers
+- Descriptive words
+- Any word that carries meaning
+
+Return JSON:
 {{
-  "transcript": "the original transcript text",
-  "timestamp_ms": "current timestamp in milliseconds",
-  "intent": "the main intent or purpose of the speaker",
-  "entities": ["list", "of", "key", "entities", "mentioned"]
+  "transcript": "{transcript}",
+  "timestamp_ms": {timestamp_ms},
+  "intent": "<intent>",
+  "entities": ["<extract ALL meaningful keywords>"]
 }}
 
-Transcript: "{transcript}"
-
-Return only valid JSON, no additional text.<end_of_turn>
+Example: "Please call John Smith at 3 PM tomorrow about the project deadline"
+{{
+  "transcript": "Please call John Smith at 3 PM tomorrow about the project deadline",
+  "timestamp_ms": 1234567890,
+  "intent": "request",
+  "entities": ["call", "John", "Smith", "3 PM", "tomorrow", "project", "deadline"]
+}}<end_of_turn>
 <start_of_turn>model
 """
             return prompt
@@ -150,7 +182,7 @@ Return only valid JSON, no additional text.<end_of_turn>
             }
         
         # Create prompt
-        prompt = self._create_prompt(transcript)
+        prompt = self._create_prompt(transcript, timestamp_ms)
         
         # Tokenize
         inputs = self.tokenizer(
@@ -166,20 +198,26 @@ Return only valid JSON, no additional text.<end_of_turn>
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=256,
-                temperature=0.1,
+                max_new_tokens=200,  # Reduced for faster response
+                temperature=0.3,  # Lower for more deterministic output
                 do_sample=True,
-                top_p=0.95,
+                top_p=0.9,
+                top_k=40,  # Adjusted for better quality
                 num_return_sequences=1,
                 eos_token_id=self.tokenizer.eos_token_id,
-                pad_token_id=self.tokenizer.pad_token_id
+                pad_token_id=self.tokenizer.pad_token_id,
+                repetition_penalty=1.05  # Slight penalty for repetition
             )
         
         # Decode
         generated = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         
+        # Log the raw model output for debugging
+        logger.info(f"Model generated: {generated[:200]}...")
+        
         # Extract JSON from response
         json_str = self._extract_json_from_text(generated)
+        logger.info(f"Extracted JSON string: {json_str[:200]}...")
         
         try:
             result = json.loads(json_str)
@@ -188,9 +226,13 @@ Return only valid JSON, no additional text.<end_of_turn>
             result["timestamp_ms"] = result.get("timestamp_ms", timestamp_ms or int(time.time() * 1000))
             result["intent"] = result.get("intent", "unknown")
             result["entities"] = result.get("entities", [])
+            
+            logger.info(f"Successfully parsed JSON - intent: {result['intent']}, entities: {result['entities']}")
             return result
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse JSON from model output: {json_str}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON from model output: {e}")
+            logger.warning(f"JSON string was: {json_str}")
+            logger.info("Falling back to rule-based extraction")
             return self._fallback_extraction(transcript, timestamp_ms)
     
     def _extract_json_from_text(self, text: str) -> str:
@@ -199,15 +241,28 @@ Return only valid JSON, no additional text.<end_of_turn>
         if "<start_of_turn>model" in text:
             text = text.split("<start_of_turn>model")[-1]
         
-        # Try to find JSON object
-        json_match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
-        if json_match:
-            return json_match.group(0)
+        # Try to find JSON object with better regex that handles nested structures
+        # Look for opening brace and find its matching closing brace
+        brace_count = 0
+        start_idx = text.find('{')
+        if start_idx != -1:
+            for i in range(start_idx, len(text)):
+                if text[i] == '{':
+                    brace_count += 1
+                elif text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        return text[start_idx:i+1]
         
         # Try to find JSON between code blocks
-        code_match = re.search(r'```(?:json)?\s*(\{[^{}]*\})\s*```', text, re.DOTALL)
+        code_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
         if code_match:
             return code_match.group(1)
+        
+        # Last resort - try to parse everything after cleaning
+        cleaned = text.strip()
+        if cleaned.startswith('{') and cleaned.endswith('}'):
+            return cleaned
         
         return text.strip()
     
@@ -216,43 +271,191 @@ Return only valid JSON, no additional text.<end_of_turn>
         # Basic intent detection
         intent = "unknown"
         transcript_lower = transcript.lower()
+        words = transcript.split()
         
-        if any(word in transcript_lower for word in ["what", "when", "where", "who", "how", "why"]):
+        # More accurate intent detection
+        # Question - check for question words or question mark
+        if (transcript.strip().endswith("?") or 
+            any(transcript_lower.startswith(qw + " ") for qw in ["what", "when", "where", "who", "how", "why", "which", "whose", "is", "are", "do", "does", "did", "can", "could", "would", "will", "should"]) or
+            any(phrase in transcript_lower for phrase in ["what's", "where's", "who's", "how's", "when's", "why's"])):
             intent = "question"
-        elif any(word in transcript_lower for word in ["please", "can you", "could you", "would you"]):
+        # Request - polite commands
+        elif any(phrase in transcript_lower for phrase in ["please", "can you", "could you", "would you", "will you", "may i", "might i", "i need", "i'd like", "i would like"]):
             intent = "request"
-        elif any(word in transcript_lower for word in ["thank", "thanks", "appreciate"]):
+        # Gratitude
+        elif any(word in transcript_lower for word in ["thank", "thanks", "appreciate", "grateful"]):
             intent = "gratitude"
-        elif any(word in transcript_lower for word in ["hello", "hi", "hey", "good morning"]):
+        # Greeting
+        elif any(word in transcript_lower for word in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "greetings"]):
             intent = "greeting"
-        elif any(word in transcript_lower for word in ["bye", "goodbye", "see you"]):
+        # Farewell
+        elif any(word in transcript_lower for word in ["bye", "goodbye", "see you", "farewell", "take care", "later", "night"]):
             intent = "farewell"
+        # Command - imperative sentences
+        elif (transcript.strip().endswith("!") or
+              (len(words) > 0 and words[0].lower() in ["do", "don't", "stop", "start", "go", "come", "wait", "listen", "look", "watch", "take", "put", "give", "get", "make", "let", "keep", "turn", "move", "run", "walk", "sit", "stand"])):
+            intent = "command"
+        # Default to statement
         else:
             intent = "statement"
         
-        # Basic entity extraction (proper nouns, numbers)
-        entities = []
+        # Enhanced keyword extraction
+        keywords = []
         
-        # Extract capitalized words (potential names/places)
-        words = transcript.split()
-        for word in words:
-            if word and word[0].isupper() and len(word) > 1:
-                clean_word = re.sub(r'[^\w\s]', '', word)
-                if clean_word and clean_word not in ["I", "The", "A", "An"]:
-                    entities.append(clean_word)
+        # Common words to exclude (stopwords)
+        stopwords = {
+            'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+            'may', 'might', 'must', 'shall', 'can', 'need',
+            'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'up', 'about', 'into',
+            'through', 'during', 'before', 'after', 'above', 'below', 'between', 'under',
+            'again', 'further', 'then', 'once',
+            'here', 'there', 'all', 'both', 'each', 'few', 'more', 'most', 'other',
+            'some', 'such', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
+            's', 't', 'd', 'll', 've', 'm', 're',
+            'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 
+            'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 
+            'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their',
+            'theirs', 'themselves', 'this', 'that', 'these', 'those',
+            'am', 'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t', 'hasn\'t', 'haven\'t',
+            'hadn\'t', 'doesn\'t', 'don\'t', 'didn\'t', 'won\'t', 'wouldn\'t', 'couldn\'t',
+            'shouldn\'t', 'mightn\'t', 'mustn\'t', 'needn\'t', 'shan\'t', 'can\'t',
+            'it\'s', 'let\'s', 'that\'s', 'who\'s', 'what\'s', 'here\'s', 'there\'s',
+            'when\'s', 'where\'s', 'why\'s', 'how\'s',
+            'as', 'if', 'because', 'while', 'until', 'although', 'since', 'unless',
+            'and', 'but', 'or', 'yet', 'nor', 'not',
+            'just', 'like', 'yeah', 'yes', 'no', 'ok', 'okay', 'oh', 'ah', 'um', 'uh',
+            'well', 'really', 'actually', 'basically', 'seriously', 'honestly',
+            'mean', 'know', 'think', 'want', 'get', 'got', 'go', 'going', 'went',
+            'come', 'came', 'say', 'said', 'tell', 'told', 'see', 'saw', 'look', 'looked'
+        }
         
-        # Extract numbers
-        numbers = re.findall(r'\b\d+\b', transcript)
-        entities.extend(numbers)
+        # First, extract all words and clean them
+        all_words = re.findall(r'\b[a-zA-Z0-9]+(?:\'[a-zA-Z]+)?\b', transcript)
         
-        # Remove duplicates
-        entities = list(dict.fromkeys(entities))
+        for word in all_words:
+            word_lower = word.lower()
+            
+            # Skip stopwords and very short words
+            if word_lower in stopwords or len(word) < 2:
+                continue
+            
+            # Add the word (keep original capitalization for proper nouns)
+            if word[0].isupper() and word not in keywords:
+                keywords.append(word)
+            elif word_lower not in [k.lower() for k in keywords]:
+                keywords.append(word_lower)
+        
+        # Extract all numbers (including times, dates, etc.)
+        numbers = re.findall(r'\b\d+(?::\d+)?(?:\s*[AaPp][Mm])?\b', transcript)
+        keywords.extend(numbers)
+        
+        # Extract compound terms (e.g., "San Francisco", "project deadline")
+        # Two-word phrases where at least one word is capitalized
+        compound_patterns = [
+            r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b',  # Both capitalized
+            r'\b[A-Z][a-z]+\s+[a-z]+\b',       # First capitalized
+            r'\b[a-z]+\s+[A-Z][a-z]+\b',       # Second capitalized
+        ]
+        
+        for pattern in compound_patterns:
+            compounds = re.findall(pattern, transcript)
+            for compound in compounds:
+                # Check if it's meaningful (not just articles/prepositions)
+                words_in_compound = compound.split()
+                if all(w.lower() not in stopwords for w in words_in_compound):
+                    keywords.append(compound)
+        
+        # Extract special patterns
+        # Times with AM/PM
+        times = re.findall(r'\b\d{1,2}(?::\d{2})?\s*[AaPp][Mm]\b', transcript, re.IGNORECASE)
+        keywords.extend(times)
+        
+        # Dates in various formats
+        date_patterns = [
+            r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\b',
+            r'\b\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?\b',
+            r'\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b',
+            r'\b(?:tomorrow|yesterday|today)\b',
+            r'\b(?:next|last|this)\s+(?:week|month|year|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b'
+        ]
+        
+        for pattern in date_patterns:
+            dates = re.findall(pattern, transcript, re.IGNORECASE)
+            keywords.extend(dates)
+        
+        # Extract email addresses
+        emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', transcript)
+        keywords.extend(emails)
+        
+        # Extract URLs
+        urls = re.findall(r'https?://[^\s]+', transcript)
+        keywords.extend(urls)
+        
+        # Extract phone numbers
+        phones = re.findall(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', transcript)
+        keywords.extend(phones)
+        
+        # Important: extract action words (verbs) that are meaningful
+        important_verbs = {
+            'call', 'email', 'send', 'schedule', 'meet', 'discuss', 'review', 'prepare',
+            'submit', 'approve', 'cancel', 'postpone', 'remind', 'check', 'update', 'create',
+            'delete', 'edit', 'write', 'read', 'sign', 'pay', 'buy', 'sell', 'book', 'reserve',
+            'plan', 'organize', 'arrange', 'confirm', 'notify', 'inform', 'request', 'order',
+            'deliver', 'ship', 'receive', 'process', 'complete', 'finish', 'start', 'begin',
+            'continue', 'stop', 'pause', 'resume', 'fix', 'repair', 'install', 'configure',
+            'build', 'design', 'develop', 'test', 'debug', 'deploy', 'launch', 'release'
+        }
+        
+        for verb in important_verbs:
+            # Check for different forms
+            patterns = [verb, verb + 'ing', verb + 'ed', verb + 's']
+            for pattern in patterns:
+                if pattern in transcript_lower and pattern not in [k.lower() for k in keywords]:
+                    keywords.append(pattern)
+                    break
+        
+        # Clean up and deduplicate keywords
+        cleaned_keywords = []
+        seen_lower = set()
+        
+        for keyword in keywords:
+            # Clean the keyword
+            keyword_clean = keyword.strip()
+            if not keyword_clean:
+                continue
+                
+            # Normalize for deduplication
+            keyword_lower = keyword_clean.lower()
+            
+            # Skip if we've seen it
+            if keyword_lower in seen_lower:
+                continue
+            
+            seen_lower.add(keyword_lower)
+            cleaned_keywords.append(keyword_clean)
+        
+        # Sort keywords by importance (proper nouns first, then numbers, then others)
+        def keyword_priority(kw):
+            if kw[0].isupper():  # Proper noun
+                return 0
+            elif re.match(r'^\d', kw):  # Starts with number
+                return 1
+            elif any(c.isdigit() for c in kw):  # Contains number
+                return 2
+            else:
+                return 3
+        
+        cleaned_keywords.sort(key=keyword_priority)
+        
+        # Log what we extracted
+        logger.info(f"Keyword extraction: intent={intent}, keywords={cleaned_keywords[:15]}")
         
         return {
             "transcript": transcript,
             "timestamp_ms": timestamp_ms or int(time.time() * 1000),
             "intent": intent,
-            "entities": entities[:10]  # Limit to 10 entities
+            "entities": cleaned_keywords[:15]  # Return up to 15 keywords
         }
 
 
@@ -261,28 +464,18 @@ class MockExtractor(JSONExtractor):
     
     def __init__(self):
         logger.info("Using mock JSON extractor")
+        # Create an instance of GemmaExtractor just to use its fallback method
+        self._fallback_extractor = type('FallbackExtractor', (), {
+            '_fallback_extraction': GemmaExtractor._fallback_extraction
+        })()
     
     def extract(self, transcript: str, timestamp_ms: int = None) -> Dict:
-        """Simple mock extraction"""
-        # Simulate processing time
-        time.sleep(0.1)
+        """Use the same fallback extraction as GemmaExtractor"""
+        # Simulate minimal processing time
+        time.sleep(0.05)
         
-        # Basic extraction
-        words = transcript.split()
-        entities = [w for w in words if len(w) > 4 and w[0].isupper()]
-        
-        intent = "statement"
-        if "?" in transcript:
-            intent = "question"
-        elif any(cmd in transcript.lower() for cmd in ["please", "could", "can you"]):
-            intent = "request"
-        
-        return {
-            "transcript": transcript,
-            "timestamp_ms": timestamp_ms or int(time.time() * 1000),
-            "intent": intent,
-            "entities": entities[:5]
-        }
+        # Use the sophisticated fallback extraction
+        return self._fallback_extractor._fallback_extraction(transcript, timestamp_ms)
 
 
 class ExtractionManager:

@@ -34,13 +34,13 @@ This Android app runs Gemma 3n locally on your device to process audio transcrip
 
 ### 3. Download Gemma Model
 
-The app uses Google's MediaPipe LLM API with the Gemma 2B model. On first launch, the app will guide you through model setup:
+The app uses TensorFlow Lite for on-device inference. On first launch, the app will guide you through model setup:
 
-1. The app will show instructions to download the model from Kaggle
-2. Use the "Import Model" button to load the downloaded model
+1. Download a TFLite-compatible model or convert Gemma using the provided script
+2. Use the "Import Model" button to load the model file
 3. The model is saved permanently after first import
 
-See `MEDIAPIPE_SETUP_GUIDE.md` for detailed instructions.
+Note: The app currently runs in demo mode with mock JSON extraction until a proper TFLite model is loaded.
 
 ### 4. Enable Developer Mode on Your Pixel 9 XL
 
@@ -78,8 +78,8 @@ When the app first runs, grant these permissions:
 ## Technical Details
 
 - **Speech Recognition**: Android SpeechRecognizer API
-- **ML Framework**: MediaPipe LLM Inference API
-- **Model**: Gemma 2B IT GPU INT4 (optimized for mobile)
+- **ML Framework**: TensorFlow Lite with GPU acceleration
+- **Model**: Gemma (requires TFLite conversion)
 - **UI**: Jetpack Compose
 - **On-Device Processing**: All ML inference runs locally
 

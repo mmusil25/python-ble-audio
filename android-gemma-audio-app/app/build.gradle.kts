@@ -69,12 +69,12 @@ dependencies {
     // File picker
     implementation("androidx.activity:activity-ktx:1.8.2")
     
-    // MediaPipe for LLM inference (Gemma)
-    implementation("com.google.mediapipe:tasks-genai:0.10.10")
-    
-    // TensorFlow Lite (kept for compatibility)
+    // TensorFlow Lite for on-device ML
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-metadata:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
     
     // For audio processing - using standard Android speech recognition
     // Note: Android's built-in SpeechRecognizer is used instead of ML Kit

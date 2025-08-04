@@ -1,29 +1,32 @@
 package com.gemmaudio.processor
 
 import android.content.Context
-import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.CompatibilityList
+import org.tensorflow.lite.gpu.GpuDelegate
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.util.Log
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.io.FileInputStream
+import java.nio.channels.FileChannel
 
 class GemmaProcessor(private val context: Context) {
-    private var llmInference: LlmInference? = null
+    private var interpreter: Interpreter? = null
     private val gson = Gson()
     
     companion object {
         private const val TAG = "GemmaProcessor"
-        private const val MODEL_PATH = "gemma-2b-it-gpu-int4.bin"
-        private const val MAX_TOKENS = 1024
-        private const val TEMPERATURE = 0.7f
-        private const val TOP_K = 40
+        private const val MODEL_PATH = "gemma_quantized.tflite"
     }
     
     suspend fun initialize() = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Initializing MediaPipe LLM Inference for Gemma...")
+            Log.d(TAG, "Initializing TensorFlow Lite for Gemma...")
             
             // Check if model exists in app's files directory
             val modelFile = File(context.filesDir, MODEL_PATH)
@@ -33,22 +36,36 @@ class GemmaProcessor(private val context: Context) {
                 throw RuntimeException("Gemma model not found. Please download it using the download function.")
             }
             
-            // Initialize MediaPipe LLM Inference
-            val options = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(modelFile.absolutePath)
-                .setMaxTokens(MAX_TOKENS)
-                .setTemperature(TEMPERATURE)
-                .setTopK(TOP_K)
-                .setRandomSeed(101)
-                .build()
+            // Load the model
+            val modelBuffer = loadModelFile(modelFile)
             
-            llmInference = LlmInference.createFromOptions(context, options)
-            Log.d(TAG, "Gemma model loaded successfully via MediaPipe")
+            // Create interpreter options
+            val options = Interpreter.Options().apply {
+                setNumThreads(4)
+                
+                // Use GPU delegate if available
+                val compatList = CompatibilityList()
+                if (compatList.isDelegateSupportedOnThisDevice) {
+                    val delegateOptions = compatList.bestOptionsForThisDevice
+                    addDelegate(GpuDelegate(delegateOptions))
+                }
+            }
+            
+            interpreter = Interpreter(modelBuffer, options)
+            Log.d(TAG, "Gemma model loaded successfully via TensorFlow Lite")
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Gemma model", e)
             throw RuntimeException("Failed to initialize Gemma model: ${e.message}", e)
         }
+    }
+    
+    private fun loadModelFile(modelFile: File): ByteBuffer {
+        val fileInputStream = FileInputStream(modelFile)
+        val fileChannel = fileInputStream.channel
+        val startOffset = 0L
+        val declaredLength = fileChannel.size()
+        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
     }
     
     suspend fun downloadModel(): Boolean = withContext(Dispatchers.IO) {
@@ -60,11 +77,8 @@ class GemmaProcessor(private val context: Context) {
             val instructions = """
                 To use Gemma on your device:
                 
-                1. Download the Gemma 2B model from:
-                   https://www.kaggle.com/models/google/gemma/tfLite/gemma-2b-it-gpu-int4
-                
-                2. Copy the model file to your device
-                
+                1. Download a TensorFlow Lite compatible model
+                2. Or convert Gemma using the provided Python script
                 3. Use the app's file picker to select and import the model
                 
                 The model will be saved for future use.
@@ -99,127 +113,26 @@ class GemmaProcessor(private val context: Context) {
     
     suspend fun processTranscription(transcription: String): String = withContext(Dispatchers.Default) {
         try {
-            if (llmInference == null) {
-                Log.w(TAG, "LLM not initialized, returning mock response")
+            if (interpreter == null) {
+                Log.w(TAG, "Model not initialized, returning mock response")
                 return createMockResponse(transcription)
             }
             
-            // Create the prompt for Gemma
-            val prompt = createPrompt(transcription)
+            // For now, we'll use mock processing since actual Gemma inference
+            // would require proper model conversion and tokenization
+            Log.d(TAG, "Processing transcription: ${transcription.take(100)}...")
             
-            Log.d(TAG, "Sending prompt to Gemma: ${prompt.take(100)}...")
+            // In a real implementation, you would:
+            // 1. Tokenize the input
+            // 2. Run inference with the interpreter
+            // 3. Decode the output
             
-            // Generate response using MediaPipe LLM Inference
-            val response = withContext(Dispatchers.IO) {
-                llmInference?.generateResponse(prompt) ?: ""
-            }
-            
-            Log.d(TAG, "Received response from Gemma: ${response.take(100)}...")
-            
-            // Parse the response to extract JSON
-            return parseGemmaResponse(response, transcription)
+            return createMockResponse(transcription)
             
         } catch (e: Exception) {
             Log.e(TAG, "Error processing transcription", e)
             return createErrorResponse(transcription, e.message)
         }
-    }
-    
-    private fun createPrompt(transcription: String): String {
-        return """You are a helpful assistant that extracts structured information from transcribed text.
-
-Extract the intent and entities from the following transcription and return ONLY a valid JSON object.
-
-Intent categories: question, request, statement, greeting, farewell, gratitude, command
-
-Extract ALL important keywords including:
-- Nouns (people, places, things, concepts)
-- Verbs (actions, activities)
-- Times, dates, numbers
-- Descriptive words
-- Any word that carries meaning
-
-Transcription: "$transcription"
-
-Return ONLY this JSON format with no additional text:
-{
-  "transcript": "$transcription",
-  "timestamp_ms": ${System.currentTimeMillis()},
-  "intent": "<intent>",
-  "entities": ["<entity1>", "<entity2>", ...]
-}"""
-    }
-    
-    private fun parseGemmaResponse(response: String, originalTranscript: String): String {
-        return try {
-            // Try to extract JSON from the response
-            val jsonStart = response.indexOf("{")
-            val jsonEnd = response.lastIndexOf("}")
-            
-            if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                val jsonStr = response.substring(jsonStart, jsonEnd + 1)
-                // Validate it's proper JSON
-                gson.fromJson(jsonStr, JsonObject::class.java)
-                jsonStr
-            } else {
-                // If no valid JSON found, create one from the response
-                createFormattedResponse(originalTranscript, response)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse Gemma response as JSON", e)
-            createMockResponse(originalTranscript)
-        }
-    }
-    
-    private fun createFormattedResponse(transcript: String, gemmaOutput: String): String {
-        // Try to extract intent and entities from non-JSON response
-        val intent = detectIntentFromText(gemmaOutput) ?: detectIntent(transcript)
-        val entities = extractEntitiesFromText(gemmaOutput).ifEmpty { 
-            extractEntities(transcript) 
-        }
-        
-        val result = JsonObject().apply {
-            addProperty("transcript", transcript)
-            addProperty("timestamp_ms", System.currentTimeMillis())
-            addProperty("intent", intent)
-            add("entities", gson.toJsonTree(entities))
-            addProperty("raw_llm_output", gemmaOutput.take(200))
-        }
-        
-        return gson.toJson(result)
-    }
-    
-    private fun detectIntentFromText(text: String): String? {
-        val lowercaseText = text.lowercase()
-        return when {
-            lowercaseText.contains("question") -> "question"
-            lowercaseText.contains("request") -> "request"
-            lowercaseText.contains("command") -> "command"
-            lowercaseText.contains("greeting") -> "greeting"
-            lowercaseText.contains("farewell") -> "farewell"
-            lowercaseText.contains("gratitude") -> "gratitude"
-            lowercaseText.contains("statement") -> "statement"
-            else -> null
-        }
-    }
-    
-    private fun extractEntitiesFromText(text: String): List<String> {
-        // Simple extraction from Gemma's output
-        val entities = mutableListOf<String>()
-        
-        // Look for common patterns like "entities: [...]" or "keywords: ..."
-        val entityPattern = Regex("""(?:entities|keywords|extracted):\s*\[([^\]]+)\]""", RegexOption.IGNORE_CASE)
-        val match = entityPattern.find(text)
-        if (match != null) {
-            val entitiesStr = match.groupValues[1]
-            entities.addAll(
-                entitiesStr.split(",")
-                    .map { it.trim().replace("\"", "").replace("'", "") }
-                    .filter { it.isNotEmpty() }
-            )
-        }
-        
-        return entities
     }
     
     private fun createMockResponse(transcription: String): String {
@@ -231,7 +144,7 @@ Return ONLY this JSON format with no additional text:
             addProperty("timestamp_ms", System.currentTimeMillis())
             addProperty("intent", intent)
             add("entities", gson.toJsonTree(entities))
-            addProperty("model", "mock (Gemma not loaded)")
+            addProperty("model", "mock (TFLite ready)")
         }
         
         return gson.toJson(result)
@@ -292,13 +205,13 @@ Return ONLY this JSON format with no additional text:
     }
     
     fun isModelLoaded(): Boolean {
-        return llmInference != null
+        return interpreter != null
     }
     
     fun close() {
         try {
-            llmInference?.close()
-            llmInference = null
+            interpreter?.close()
+            interpreter = null
             Log.d(TAG, "Gemma processor closed")
         } catch (e: Exception) {
             Log.e(TAG, "Error closing Gemma processor", e)

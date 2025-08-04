@@ -82,9 +82,6 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite-metadata:0.4.4")
     implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
     
-    // MediaPipe for LLM - Alternative approach for Gemma
-    implementation("com.google.mediapipe:tasks-genai-android:0.10.14")
-    
     // For audio processing - using standard Android speech recognition
     // Note: Android's built-in SpeechRecognizer is used instead of ML Kit
     

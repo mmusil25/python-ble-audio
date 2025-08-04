@@ -59,12 +59,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     modelDownloadInstructions = """
                         To use Gemma on your device:
                         
-                        1. Download a TensorFlow Lite compatible model
-                           or convert Gemma using the provided Python script
+                        1. Download a mobile-optimized TFLite model from:
+                           kaggle.com/models/google/gemma/tfLite
+                           (Look for "mobile" or "quantized" versions)
                         
                         2. Tap "Import Model" below to select the .tflite file
                         
-                        The app will run in demo mode until a model is loaded.
+                        Note: The .task file format requires MediaPipe LLM
+                        which is not yet publicly available.
+                        
+                        The app works great in demo mode!
                     """.trimIndent()
                 )
             }

@@ -140,7 +140,7 @@ fun ModelSetupScreen(
     error: String?
 ) {
     val modelPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let { viewModel.importModel(it) }
     }
@@ -185,7 +185,13 @@ fun ModelSetupScreen(
         Spacer(modifier = Modifier.height(24.dp))
         
         Button(
-            onClick = { modelPickerLauncher.launch("*/*") },
+            onClick = { 
+                modelPickerLauncher.launch(arrayOf(
+                    "application/octet-stream",  // .bin files
+                    "application/x-tflite",      // .tflite files
+                    "*/*"                        // Any file as fallback
+                ))
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = !status.contains("Importing")
         ) {

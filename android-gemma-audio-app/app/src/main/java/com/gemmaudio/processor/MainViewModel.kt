@@ -59,11 +59,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     modelDownloadInstructions = """
                         To use Gemma on your device:
                         
-                        1. Download a mobile-optimized TFLite model from:
-                           kaggle.com/models/google/gemma/tfLite
-                           (Look for "mobile" or "quantized" versions)
+                        1. You can import:
+                           • .tflite files (TensorFlow Lite models)
+                           • .bin files (binary model files)
+                           • Models from kaggle.com/models/google/gemma/tfLite
                         
-                        2. Tap "Import Model" below to select the .tflite file
+                        2. Tap "Import Model" below to select your model file
                         
                         Note: The .task file format requires MediaPipe LLM
                         which is not yet publicly available.

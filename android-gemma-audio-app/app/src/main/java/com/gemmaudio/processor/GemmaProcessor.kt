@@ -26,13 +26,20 @@ class GemmaProcessor(private val context: Context) {
         try {
             Log.d(TAG, "Initializing TensorFlow Lite for Gemma...")
             
-            // Check if model exists in app's files directory
-            val modelFile = File(context.filesDir, MODEL_PATH)
-            
-            if (!modelFile.exists()) {
-                Log.d(TAG, "Model not found locally. Please download the model first.")
-                throw RuntimeException("Gemma model not found. Please download it using the download function.")
+            // Check if model exists in app's files directory with any supported extension
+            val modelFiles = context.filesDir.listFiles { file ->
+                file.name.startsWith(MODEL_PATH) && 
+                (file.name.endsWith(".tflite") || file.name.endsWith(".bin") || file.name.endsWith(".pb"))
             }
+            
+            val modelFile = modelFiles?.firstOrNull()
+            
+            if (modelFile == null || !modelFile.exists()) {
+                Log.d(TAG, "Model not found locally. Please import a model file.")
+                throw RuntimeException("Gemma model not found. Please import a .tflite or .bin model file.")
+            }
+            
+            Log.d(TAG, "Found model file: ${modelFile.name} (${modelFile.length() / (1024 * 1024)} MB)")
             
             // Load the model
             val modelBuffer = loadModelFile(modelFile)

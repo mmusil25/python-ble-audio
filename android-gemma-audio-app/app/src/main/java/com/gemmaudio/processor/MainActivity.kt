@@ -88,9 +88,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var selectedTab by remember { mutableStateOf(0) }
     
     if (!state.isModelLoaded && state.modelDownloadInstructions != null) {
+        val instructions = state.modelDownloadInstructions!!
         ModelSetupScreen(
             viewModel = viewModel,
-            instructions = state.modelDownloadInstructions,
+            instructions = instructions,
             status = state.status,
             error = state.error
         )

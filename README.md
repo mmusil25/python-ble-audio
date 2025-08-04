@@ -203,7 +203,7 @@ extractor = ExtractionManager(extractor_type="mock")
 result = extractor.extract_from_transcript(
     "Hello, my name is John and I need help with my order",
     timestamp_ms=1234567890
-)
+) 
 print(result)
 # Output: {"transcript": "...", "intent": "request", "entities": ["John"], ...}
 ```

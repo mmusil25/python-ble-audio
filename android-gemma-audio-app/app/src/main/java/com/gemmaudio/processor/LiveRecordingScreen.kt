@@ -56,10 +56,10 @@ fun LiveRecordingScreen(viewModel: MainViewModel) {
                     textAlign = TextAlign.Center
                 )
                 
-                if (state.error != null) {
+                state.error?.let { error ->
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = state.error,
+                        text = error,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         textAlign = TextAlign.Center

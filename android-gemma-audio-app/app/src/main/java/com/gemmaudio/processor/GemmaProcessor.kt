@@ -48,9 +48,31 @@ class GemmaProcessor(private val context: Context) {
             interpreter = Interpreter(modelBuffer, options)
             Log.d(TAG, "Gemma model loaded successfully via TensorFlow Lite")
             
+            // Log model details
+            val inputCount = interpreter.inputTensorCount
+            val outputCount = interpreter.outputTensorCount
+            Log.d(TAG, "Model loaded with $inputCount inputs and $outputCount outputs")
+            
+            for (i in 0 until inputCount) {
+                val inputTensor = interpreter.getInputTensor(i)
+                Log.d(TAG, "Input $i: shape=${inputTensor.shape().contentToString()}, dtype=${inputTensor.dataType()}")
+            }
+            
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Gemma model", e)
-            throw RuntimeException("Failed to initialize Gemma model: ${e.message}", e)
+            
+            // Provide more detailed error information
+            val errorMsg = when {
+                e.message?.contains("FULLY_CONNECTED") == true -> 
+                    "Model requires newer TFLite version. Please sync project after dependency update."
+                e.message?.contains("Didn't find op") == true -> 
+                    "Model uses unsupported operations. This model may not be compatible with mobile deployment."
+                e.message?.contains("memory") == true -> 
+                    "Model too large for device memory. Try a smaller model variant."
+                else -> e.message ?: "Unknown error"
+            }
+            
+            throw RuntimeException("Failed to initialize Gemma model: $errorMsg", e)
         }
     }
     

@@ -2,8 +2,6 @@ package com.gemmaudio.processor
 
 import android.content.Context
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
-import org.tensorflow.lite.gpu.GpuDelegate
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
@@ -42,13 +40,9 @@ class GemmaProcessor(private val context: Context) {
             // Create interpreter options
             val options = Interpreter.Options().apply {
                 setNumThreads(4)
-                
-                // Use GPU delegate if available
-                val compatList = CompatibilityList()
-                if (compatList.isDelegateSupportedOnThisDevice) {
-                    val delegateOptions = compatList.bestOptionsForThisDevice
-                    addDelegate(GpuDelegate(delegateOptions))
-                }
+                // Note: GPU acceleration removed due to dependency issues
+                // The Pixel 9 XL's CPU is powerful enough for demo purposes
+                Log.d(TAG, "Using CPU with 4 threads")
             }
             
             interpreter = Interpreter(modelBuffer, options)

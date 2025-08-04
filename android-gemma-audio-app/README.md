@@ -78,10 +78,10 @@ When the app first runs, grant these permissions:
 ## Technical Details
 
 - **Speech Recognition**: Android SpeechRecognizer API
-- **ML Framework**: TensorFlow Lite with GPU acceleration
+- **ML Framework**: TensorFlow Lite
 - **Model**: Gemma (requires TFLite conversion)
 - **UI**: Jetpack Compose
-- **On-Device Processing**: All ML inference runs locally
+- **On-Device Processing**: All ML inference runs locally on CPU
 
 ## Troubleshooting
 

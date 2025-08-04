@@ -23,6 +23,7 @@ class GemmaProcessor(private val context: Context) {
     }
     
     suspend fun initialize() = withContext(Dispatchers.IO) {
+        var modelFile: File? = null
         try {
             Log.d(TAG, "Initializing TensorFlow Lite for Gemma...")
             
@@ -32,7 +33,7 @@ class GemmaProcessor(private val context: Context) {
                 (file.name.endsWith(".tflite") || file.name.endsWith(".bin") || file.name.endsWith(".pb"))
             }
             
-            val modelFile = modelFiles?.firstOrNull()
+            modelFile = modelFiles?.firstOrNull()
             
             if (modelFile == null || !modelFile.exists()) {
                 Log.d(TAG, "Model not found locally. Please import a model file.")
@@ -79,7 +80,7 @@ class GemmaProcessor(private val context: Context) {
                     "Model too large for device memory. Try a smaller model variant."
                 e.message?.contains("Integer.MAX_VALUE") == true || e.message?.contains("Size exceeds") == true -> 
                     "Model file is too large (>2GB). TFLite has a 2GB size limit. Try a smaller model."
-                modelFile.length() > Integer.MAX_VALUE -> 
+                modelFile != null && modelFile.length() > Integer.MAX_VALUE -> 
                     "Model file is ${modelFile.length() / (1024*1024*1024)}GB, exceeds TFLite's 2GB limit."
                 else -> e.message ?: "Unknown error"
             }

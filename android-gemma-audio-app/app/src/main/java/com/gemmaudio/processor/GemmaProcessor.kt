@@ -19,7 +19,7 @@ class GemmaProcessor(private val context: Context) {
     
     companion object {
         private const val TAG = "GemmaProcessor"
-        private const val MODEL_PATH = "gemma_quantized.tflite"
+        private const val MODEL_PATH = "gemma_model"  // Can be .tflite, .bin, etc.
     }
     
     suspend fun initialize() = withContext(Dispatchers.IO) {
@@ -112,7 +112,32 @@ class GemmaProcessor(private val context: Context) {
     
     suspend fun importModelFromUri(uri: android.net.Uri): Boolean = withContext(Dispatchers.IO) {
         try {
-            val modelFile = File(context.filesDir, MODEL_PATH)
+            // Delete any existing model files
+            val existingFiles = context.filesDir.listFiles { file ->
+                file.name.startsWith("gemma_model")
+            }
+            existingFiles?.forEach { it.delete() }
+            
+            // Get the file extension from the URI
+            val fileName = uri.lastPathSegment ?: "model"
+            val extension = when {
+                fileName.endsWith(".tflite", ignoreCase = true) -> ".tflite"
+                fileName.endsWith(".bin", ignoreCase = true) -> ".bin"
+                fileName.endsWith(".pb", ignoreCase = true) -> ".pb"
+                else -> {
+                    // Try to detect by reading the header
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val header = ByteArray(4)
+                        input.read(header)
+                        when {
+                            header.contentEquals(byteArrayOf(0x54, 0x46, 0x4C, 0x33)) -> ".tflite" // TFL3
+                            else -> ".bin" // Default to .bin
+                        }
+                    } ?: ".bin"
+                }
+            }
+            
+            val modelFile = File(context.filesDir, MODEL_PATH + extension)
             
             context.contentResolver.openInputStream(uri)?.use { input ->
                 modelFile.outputStream().use { output ->
@@ -120,7 +145,8 @@ class GemmaProcessor(private val context: Context) {
                 }
             }
             
-            Log.d(TAG, "Model imported successfully")
+            Log.d(TAG, "Model imported successfully as: ${modelFile.name}")
+            Log.d(TAG, "Model size: ${modelFile.length() / (1024 * 1024)} MB")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to import model", e)

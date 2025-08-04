@@ -109,23 +109,22 @@ class GemmaProcessor(private val context: Context) {
         try {
             if (interpreter == null) {
                 Log.w(TAG, "Model not initialized, returning mock response")
-                return createMockResponse(transcription)
+                createMockResponse(transcription)
+            } else {
+                // For now, we'll use mock processing since actual Gemma inference
+                // would require proper model conversion and tokenization
+                Log.d(TAG, "Processing transcription: ${transcription.take(100)}...")
+                
+                // In a real implementation, you would:
+                // 1. Tokenize the input
+                // 2. Run inference with the interpreter
+                // 3. Decode the output
+                
+                createMockResponse(transcription)
             }
-            
-            // For now, we'll use mock processing since actual Gemma inference
-            // would require proper model conversion and tokenization
-            Log.d(TAG, "Processing transcription: ${transcription.take(100)}...")
-            
-            // In a real implementation, you would:
-            // 1. Tokenize the input
-            // 2. Run inference with the interpreter
-            // 3. Decode the output
-            
-            return createMockResponse(transcription)
-            
         } catch (e: Exception) {
             Log.e(TAG, "Error processing transcription", e)
-            return createErrorResponse(transcription, e.message)
+            createErrorResponse(transcription, e.message)
         }
     }
     
